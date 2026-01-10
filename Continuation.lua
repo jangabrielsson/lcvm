@@ -353,6 +353,42 @@ local function COND(...)
   end
 end
 
+local function AND2(expr1, expr2)
+  return function(cont,env)
+    return expr1, function(val1)
+      if val1 == false then
+        return cont(false)  -- Short-circuit on false
+      else
+        return expr2, function(val2)
+          return cont(val2)  -- Return second value
+        end
+      end
+    end
+  end
+end
+
+local function ANDN(...)
+  local exprs = {...}
+  
+  return function(cont,env)
+    local function evalNext(i, lastVal)
+      if i > #exprs then
+        return cont(lastVal)  -- Return last value
+      end
+      
+      return exprs[i], function(val)
+        if val == false then  -- false is Lisp nil
+          return cont(false)  -- Short-circuit on false
+        else
+          return evalNext(i + 1, val)
+        end
+      end
+    end
+    
+    return evalNext(1, true)
+  end
+end
+
 local function AND(...)
   local exprs = {...}
   
@@ -376,6 +412,42 @@ local function AND(...)
     end
     
     return evalNext(1, true)
+  end
+end
+
+local function OR2(expr1, expr2)
+  return function(cont,env)
+    return expr1, function(val1)
+      if val1 ~= false then
+        return cont(val1)  -- Short-circuit, return truthy value
+      else
+        return expr2, function(val2)
+          return cont(val2)  -- Return second value
+        end
+      end
+    end
+  end
+end
+
+local function ORN(...)
+  local exprs = {...}
+  
+  return function(cont,env)
+    local function evalNext(i)
+      if i > #exprs then
+        return cont(false)  -- All false
+      end
+      
+      return exprs[i], function(val)
+        if val ~= false then  -- false is Lisp nil
+          return cont(val)  -- Short-circuit on non-false, return truthy value
+        else
+          return evalNext(i + 1)
+        end
+      end
+    end
+    
+    return evalNext(1)
   end
 end
 
@@ -421,9 +493,9 @@ local function LOOP(...)
     local oldLoopCont = env.__loopCont
     
     -- Create wrapper continuation that restores state and exits loop
-    env.__loopCont = function(value)
+    env.__loopCont = function(...)
       env.__loopCont = oldLoopCont  -- Restore for nested loops
-      return cont(value)  -- Exit loop with value
+      return cont(...)  -- Exit loop with value(s)
     end
     
     -- Create the loop expression that will be reused
@@ -441,23 +513,54 @@ local function LOOP(...)
   end
 end
 
+local function BREAK0()
+  return function(cont, env, ...)
+    if not env or type(env) ~= "table" or not env.__loopCont then
+      error("BREAK outside of loop")
+    end
+    return env.__loopCont(nil)
+  end
+end
+
+local function BREAK1(expr)
+  return function(cont, env, ...)
+    if not env or type(env) ~= "table" or not env.__loopCont then
+      error("BREAK outside of loop")
+    end
+    return expr, function(val)
+      return env.__loopCont(val)
+    end
+  end
+end
+
 local function BREAK(...)
   local exprs = {...}
   return function(cont, env, ...)
     if not env or type(env) ~= "table" or not env.__loopCont then
       error("BREAK outside of loop")
     end
-    
-    local exitCont = env.__loopCont
-    
-    if #exprs == 0 then
-      -- Break with nil - call loop exit continuation directly
-      return exitCont(nil)
-    else
-      -- Evaluate expressions, then break with result
-      return evalExprs(exprs, function(...)
-        return exitCont(...)  -- Exit loop with evaluated value
-      end, env)
+    return evalArgs(exprs, function(...)
+      return env.__loopCont(...)
+    end)
+  end
+end
+
+local function RETURN0()
+  return function(cont, env, ...)
+    if not env or type(env) ~= "table" or not env.__funcCont then
+      error("RETURN outside of function")
+    end
+    return env.__funcCont(nil)
+  end
+end
+
+local function RETURN1(expr)
+  return function(cont, env, ...)
+    if not env or type(env) ~= "table" or not env.__funcCont then
+      error("RETURN outside of function")
+    end
+    return expr, function(val)
+      return env.__funcCont(val)
     end
   end
 end
@@ -468,17 +571,22 @@ local function RETURN(...)
     if not env or type(env) ~= "table" or not env.__funcCont then
       error("RETURN outside of function")
     end
-    
-    local exitCont = env.__funcCont
-    
-    if #exprs == 0 then
-      -- Return nil - call function exit continuation directly
-      return exitCont(nil)
-    else
-      -- Evaluate expressions, then return with result
-      return evalExprs(exprs, function(...)
-        return exitCont(...)  -- Exit function with evaluated value
-      end, env)
+    return evalArgs(exprs, function(...)
+      return env.__funcCont(...)
+    end)
+  end
+end
+
+local function VALUES0()
+  return function(cont, env)
+    return cont()
+  end
+end
+
+local function VALUES1(expr)
+  return function(cont, env)
+    return expr, function(val)
+      return cont(val)
     end
   end
 end
@@ -486,14 +594,9 @@ end
 local function VALUES(...)
   local exprs = {...}
   return function(cont, env)
-    if #exprs == 0 then
-      return cont()
-    else
-      -- Evaluate all expressions and return them as multiple values
-      return evalArgs(exprs, function(...)
-        return cont(...)  -- Return all evaluated values
-      end)
-    end
+    return evalArgs(exprs, function(...)
+      return cont(...)
+    end)
   end
 end
 
@@ -568,31 +671,47 @@ local function CREATE_COROUTINE(funcExpr)
   end
 end
 
-local function YIELD(...)
-  local exprs = {...}
+local function YIELD0()
   return function(cont, env, ...)
-    -- Get current coroutine from environment self object
     local co = env:getCurrentCoroutine()
     if not co then
       env.error("YIELD outside of coroutine")
       return
     end
-    
-    -- Store continuation for next resume
     co.cont = cont
     co.status = 'suspended'
-    
-    -- Evaluate yield values and return to resumer
-    if #exprs == 0 then
-      -- Yield with no value - return just status
-      return co.resumeCont(true)
-    else
-      -- Evaluate expressions and return them as additional values
-      return evalExprs(exprs, function(...)
-        -- Return yielded values to the resumer
-        return co.resumeCont(true, ...)
-      end, env)
+    return co.resumeCont(true)
+  end
+end
+
+local function YIELD1(expr)
+  return function(cont, env, ...)
+    local co = env:getCurrentCoroutine()
+    if not co then
+      env.error("YIELD outside of coroutine")
+      return
     end
+    co.cont = cont
+    co.status = 'suspended'
+    return expr, function(val)
+      return co.resumeCont(true, val)
+    end
+  end
+end
+
+local function YIELD(...)
+  local exprs = {...}
+  return function(cont, env, ...)
+    local co = env:getCurrentCoroutine()
+    if not co then
+      env.error("YIELD outside of coroutine")
+      return
+    end
+    co.cont = cont
+    co.status = 'suspended'
+    return evalArgs(exprs, function(...)
+      return co.resumeCont(true, ...)
+    end)
   end
 end
 
@@ -771,18 +890,78 @@ expr.FUNCALL = EXPR(FUNCALL,"(%1 ...)")
 expr.SETQ = EXPR(SETQ,"(SETQ %1 %2)")
 expr.LET = EXPR(LET,"(LET ...)")
 expr.COND = EXPR(COND,"(COND ...)")
-expr.AND = EXPR(AND,"(AND ...)")
-expr.OR = EXPR(OR,"(OR ...)")
+-- Smart dispatcher for AND - chooses optimal variant based on arg count
+expr.AND = function(...)
+  local n = select('#', ...)
+  if n == 0 then
+    return EXPR(AND,"(AND)")()
+  elseif n == 2 then
+    return EXPR(AND2,"(AND %1 %2)")(...)  
+  else
+    return EXPR(ANDN,"(AND ...)")(...)  
+  end
+end
+-- Smart dispatcher for OR - chooses optimal variant based on arg count
+expr.OR = function(...)
+  local n = select('#', ...)
+  if n == 0 then
+    return EXPR(OR,"(OR)")()
+  elseif n == 2 then
+    return EXPR(OR2,"(OR %1 %2)")(...)  
+  else
+    return EXPR(ORN,"(OR ...)")(...)  
+  end
+end
 expr.NOT = EXPR(NOT,"(NOT %1)")
 expr.LOOP = EXPR(LOOP,"(LOOP ...)")
-expr.BREAK = EXPR(BREAK,"(BREAK ...)")
-expr.RETURN = EXPR(RETURN,"(RETURN ...)")
-expr.VALUES = EXPR(VALUES,"(VALUES ...)")
+-- Smart dispatcher for BREAK - chooses optimal variant based on arg count
+expr.BREAK = function(...)
+  local n = select('#', ...)
+  if n == 0 then
+    return EXPR(BREAK0,"(BREAK)")()
+  elseif n == 1 then
+    return EXPR(BREAK1,"(BREAK %1)")(...)
+  else
+    return EXPR(BREAK,"(BREAK ...)")(...)  
+  end
+end
+-- Smart dispatcher for RETURN - chooses optimal variant based on arg count
+expr.RETURN = function(...)
+  local n = select('#', ...)
+  if n == 0 then
+    return EXPR(RETURN0,"(RETURN)")()
+  elseif n == 1 then
+    return EXPR(RETURN1,"(RETURN %1)")(...)
+  else
+    return EXPR(RETURN,"(RETURN ...)")(...)  
+  end
+end
+-- Smart dispatcher for VALUES - chooses optimal variant based on arg count
+expr.VALUES = function(...)
+  local n = select('#', ...)
+  if n == 0 then
+    return EXPR(VALUES0,"(VALUES)")()
+  elseif n == 1 then
+    return EXPR(VALUES1,"(VALUES %1)")(...)
+  else
+    return EXPR(VALUES,"(VALUES ...)")(...)  
+  end
+end
 expr.CATCH = EXPR(CATCH,"(CATCH %1 ...)")
 expr.THROW = EXPR(THROW,"(THROW %1 %2)")
 expr.CREATE_COROUTINE = EXPR(CREATE_COROUTINE,"(CREATE-COROUTINE %1)")
 expr.RESUME = EXPR(RESUME,"(RESUME %1 ...)")
-expr.YIELD = EXPR(YIELD,"(YIELD ...)")
+-- Smart dispatcher for YIELD - chooses optimal variant based on arg count
+expr.YIELD = function(...)
+  local n = select('#', ...)
+  if n == 0 then
+    return EXPR(YIELD0,"(YIELD)")()
+  elseif n == 1 then
+    return EXPR(YIELD1,"(YIELD %1)")(...)
+  else
+    return EXPR(YIELD,"(YIELD ...)")(...)  
+  end
+end
 expr.LIST = EXPR(LIST,"(LIST ...)")
 expr.CONS = EXPR(CONS,"(CONS %1 %2)")
 expr.CAR = EXPR(CAR,"(CAR %1)")

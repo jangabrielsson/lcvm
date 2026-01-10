@@ -249,8 +249,7 @@ spec['progn'] = function(expr,ctx)
   return VM.expr.PROGN(table.unpack(exprs))
 end
 spec['lambda'] = function(expr,ctx) -- (lambda (a b) . body )
-  local params = expr[2]
-  local body = {}
+  local params,body = expr[2],{}
   for i=3,#expr do
     body[i-2] = compile(expr[i],ctx)
   end
@@ -259,9 +258,7 @@ end
 spec['func'] = spec['lambda']  -- Backward compatibility alias
 spec['defun'] = function(expr,ctx) -- (defun name (params) . body)
   assert(#expr >= 3, "defun requires name, params, and body")
-  local name = expr[2]
-  local params = expr[3]
-  local body = {}
+  local name,params,body = expr[2],expr[3],{}
   for i=4,#expr do
     body[#body+1] = compile(expr[i],ctx)
   end
@@ -281,21 +278,19 @@ spec['loop'] = function(expr,ctx) -- (loop . body)
   end
   return VM.expr.LOOP(table.unpack(body))
 end
-spec['break'] = function(expr,ctx) -- (break [value])
-  if #expr == 1 then
-    return VM.expr.BREAK()
-  else
-    local val = compile(expr[2],ctx)
-    return VM.expr.BREAK(val)
+spec['break'] = function(expr,ctx) -- (break [value...])
+  local vals = {}
+  for i = 2, #expr do
+    vals[#vals+1] = compile(expr[i],ctx)
   end
+  return VM.expr.BREAK(table.unpack(vals))
 end
-spec['return'] = function(expr,ctx) -- (return [value])
-  if #expr == 1 then
-    return VM.expr.RETURN()
-  else
-    local val = compile(expr[2],ctx)
-    return VM.expr.RETURN(val)
+spec['return'] = function(expr,ctx) -- (return [value...])
+  local vals = {}
+  for i = 2, #expr do
+    vals[#vals+1] = compile(expr[i],ctx)
   end
+  return VM.expr.RETURN(table.unpack(vals))
 end
 spec['values'] = function(expr,ctx) -- (values val1 val2 ...)
   local vals = {}
