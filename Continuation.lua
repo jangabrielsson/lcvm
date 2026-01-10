@@ -17,6 +17,7 @@ end
   - RETURN: Function early return
   - VALUES: Multiple return values
   - LIST, CONS, CAR, CDR, NULL?: List operations
+  - AREF, ASET, MAKE_TABLE: Lua table access operations (MAKE_TABLE supports initial key-value pairs)
   
   Language-specific features (arithmetic, string operations, etc.) should be
   implemented in the language layer (e.g., Lisp.lua) using FUNCALL to invoke
@@ -312,6 +313,45 @@ local function LET(bindings,...)
       local locals = {}
       for i,binding in ipairs(bindings) do
         locals[binding[1]] = {values[i]}
+      end
+      
+      env:pushFrame(locals)
+      return evalExprs(body, function(...)
+        env:popFrame()
+        return cont(...)
+      end, env)
+    end)
+  end
+end
+
+local function LETV(varNames, exprs, ...)
+  -- varNames: list of variable names (strings)
+  -- exprs: list of expressions to evaluate
+  -- Honors multiple values from last expression (using evalArgs)
+  local body = {...}
+  
+  return function(cont, env)
+    if #exprs == 0 then
+      -- No expressions - all vars get false (nil)
+      local locals = {}
+      for _, name in ipairs(varNames) do
+        locals[name] = {false}
+      end
+      env:pushFrame(locals)
+      return evalExprs(body, function(...)
+        env:popFrame()
+        return cont(...)
+      end, env)
+    end
+    
+    -- evalArgs automatically captures all values from last expression
+    return evalArgs(exprs, function(...)
+      local values = {...}
+      
+      -- Bind variables to values
+      local locals = {}
+      for i, name in ipairs(varNames) do
+        locals[name] = {values[i] or false}  -- false if not enough values
       end
       
       env:pushFrame(locals)
@@ -875,6 +915,57 @@ local function NULLP(expr)
   end
 end
 
+local function AREF(tableExpr, keyExpr)
+  return function(cont, env)
+    return tableExpr, function(tbl)
+      if type(tbl) ~= 'table' then
+        if env.error then env.error("AREF: first argument must be a table") end
+        return cont(false)
+      end
+      return keyExpr, function(key)
+        local value = tbl[key]
+        return cont(value == nil and false or value)  -- Convert nil to false (Lisp nil)
+      end
+    end
+  end
+end
+
+local function ASET(tableExpr, keyExpr, valueExpr)
+  return function(cont, env)
+    return tableExpr, function(tbl)
+      if type(tbl) ~= 'table' then
+        if env.error then env.error("ASET: first argument must be a table") end
+        return cont(false)
+      end
+      return keyExpr, function(key)
+        return valueExpr, function(value)
+          tbl[key] = value
+          return cont(value)  -- Return the value that was set
+        end
+      end
+    end
+  end
+end
+
+local function MAKE_TABLE(...) -- key1,value1,...,keyN,valueN
+  local values = {...}
+  return function(cont, env)
+    if #values==0 then return cont({})  -- Return empty Lua table
+    else
+      return evalArgs(values, function(...)
+        local tbl = {}
+        local vals = {...}
+        for i=1,#vals,2 do
+          local k = vals[i]
+          local v = vals[i+1]
+          tbl[k] = v
+        end
+        return cont(tbl)
+      end)
+    end
+  end
+end
+
 local expr = {}
 expr.VAR = EXPR(VAR,"(VAR %1)")
 expr.CONST = EXPR(CONST,"(CONST %1)")
@@ -889,6 +980,7 @@ expr.FUNC = FUNC    -- Backward compatibility alias
 expr.FUNCALL = EXPR(FUNCALL,"(%1 ...)")
 expr.SETQ = EXPR(SETQ,"(SETQ %1 %2)")
 expr.LET = EXPR(LET,"(LET ...)")
+expr.LETV = EXPR(LETV,"(LETV ...)")
 expr.COND = EXPR(COND,"(COND ...)")
 -- Smart dispatcher for AND - chooses optimal variant based on arg count
 expr.AND = function(...)
@@ -967,6 +1059,9 @@ expr.CONS = EXPR(CONS,"(CONS %1 %2)")
 expr.CAR = EXPR(CAR,"(CAR %1)")
 expr.CDR = EXPR(CDR,"(CDR %1)")
 expr.NULLP = EXPR(NULLP,"(NULL? %1)")
+expr.AREF = EXPR(AREF,"(AREF %1 %2)")
+expr.ASET = EXPR(ASET,"(ASET %1 %2 %3)")
+expr.MAKE_TABLE = EXPR(MAKE_TABLE,"(MAKE-TABLE)")
 
 local function createEnvironment(vars,nonVarHandler,sharedTopvars)
   local self = { 

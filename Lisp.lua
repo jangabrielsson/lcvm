@@ -313,6 +313,34 @@ spec['let'] = function(expr,ctx) -- (let ((var1 val1) (var2 val2)) . body)
   end
   return VM.expr.LET(bindings, table.unpack(body))
 end
+spec['letv'] = function(expr,ctx) -- (letv (var1 var2 ...) (expr1 expr2 ...) . body)
+  assert(#expr >= 3, "letv requires variable list, expression list, and body")
+  local varList = expr[2]
+  local exprList = expr[3]
+  assert(type(varList) == 'table', "letv first argument must be variable list")
+  assert(type(exprList) == 'table', "letv second argument must be expression list")
+  
+  -- Extract variable names
+  local varNames = {}
+  for i, name in ipairs(varList) do
+    assert(type(name) == 'string', "letv variables must be symbols")
+    varNames[i] = name
+  end
+  
+  -- Compile expressions
+  local exprs = {}
+  for i, e in ipairs(exprList) do
+    exprs[i] = compile(e, ctx)
+  end
+  
+  -- Compile body
+  local body = {}
+  for i=4,#expr do
+    body[#body+1] = compile(expr[i],ctx)
+  end
+  
+  return VM.expr.LETV(varNames, exprs, table.unpack(body))
+end
 spec['cond'] = function(expr,ctx) -- (cond (test1 expr1 ...) (test2 expr2 ...) ...)
   local clauses = {}
   for i=2,#expr do
@@ -367,6 +395,21 @@ end
 spec['null?'] = function(expr,ctx) -- (null? expr)
   assert(#expr == 2, "null? requires exactly one argument")
   return VM.expr.NULLP(compile(expr[2],ctx))
+end
+spec['aref'] = function(expr,ctx) -- (aref table key)
+  assert(#expr == 3, "aref requires exactly two arguments")
+  return VM.expr.AREF(compile(expr[2],ctx), compile(expr[3],ctx))
+end
+spec['aset'] = function(expr,ctx) -- (aset table key value)
+  assert(#expr == 4, "aset requires exactly three arguments")
+  return VM.expr.ASET(compile(expr[2],ctx), compile(expr[3],ctx), compile(expr[4],ctx))
+end
+spec['make-table'] = function(expr,ctx) -- (make-table [key1 value1 ...])
+  local args = {}
+  for i=2,#expr do
+    args[#args+1] = compile(expr[i],ctx)
+  end
+  return VM.expr.MAKE_TABLE(table.unpack(args))
 end
 spec['catch'] = function(expr,ctx) -- (catch tag body...)
   assert(#expr >= 3, "catch requires at least tag and one body expression")
