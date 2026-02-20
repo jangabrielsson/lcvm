@@ -1,29 +1,31 @@
 local FUNCTION = "func".."tion"
+
+local unpack = table.unpack
 local function isContinuation(f)
   return (getmetatable(f) or {}).__type == 'continuation'
 end
 
 --[[
-  Continuation-based Virtual Machine (Domain-Agnostic)
-  
-  This VM provides core continuation-passing style execution primitives:
-  - VAR, CONST: Variable and constant access
-  - IF, COND: Conditional control flow
-  - AND, OR, NOT: Logical operators with short-circuit evaluation
-  - PROGN: Sequential execution
-  - FUNC, FUNCALL: Function definition and invocation
-  - SETQ, LET: Variable assignment and local bindings
-  - LOOP, BREAK: Loop constructs with early exit
-  - RETURN: Function early return
-  - VALUES: Multiple return values
-  - LIST, CONS, CAR, CDR, NULL?: List operations
-  - AREF, ASET, MAKE_TABLE: Lua table access operations (MAKE_TABLE supports initial key-value pairs)
-  
-  Language-specific features (arithmetic, string operations, etc.) should be
-  implemented in the language layer (e.g., Lisp.lua) using FUNCALL to invoke
-  functions registered in the environment.
-  
-  Error handling is delegated to env.error (a continuation provided by the language).
+Continuation-based Virtual Machine (Domain-Agnostic)
+
+This VM provides core continuation-passing style execution primitives:
+- VAR, CONST: Variable and constant access
+- IF, COND: Conditional control flow
+- AND, OR, NOT: Logical operators with short-circuit evaluation
+- PROGN: Sequential execution
+- FUNC, FUNCALL: Function definition and invocation
+- SETQ, LET: Variable assignment and local bindings
+- LOOP, BREAK: Loop constructs with early exit
+- RETURN: Function early return
+- VALUES: Multiple return values
+- LIST, CONS, CAR, CDR, NULL?: List operations
+- AREF, ASET, MAKE_TABLE: Lua table access operations (MAKE_TABLE supports initial key-value pairs)
+
+Language-specific features (arithmetic, string operations, etc.) should be
+implemented in the language layer (e.g., Lisp.lua) using FUNCALL to invoke
+functions registered in the environment.
+
+Error handling is delegated to env.error (a continuation provided by the language).
 --]]
 
 -- expr: (cont,env,...) -> next_expr,cont
@@ -36,6 +38,9 @@ local function execute(expr, cont, env, options, ...)
   local debug = options.debug or false
   local onStep = options.onStep
   
+  -- Set top-level function continuation so RETURN works at the top level
+  env.__funcCont = env.__funcCont or cont
+
   local i = 0
   local args = {...}
   
@@ -105,32 +110,37 @@ local function CONST(v)
   return function(cont,env) return cont(v) end
 end
 
-local function EXPR(fun,templ)
+local function toSexpr(expr)
+  if type(expr) == 'table' then
+    local sexprs = {}
+    for _,e in ipairs(expr) do
+      sexprs[#sexprs+1] = toSexpr(e)
+    end
+    local mt = getmetatable(expr)
+    if mt and mt.__sexpr then
+      return mt.__sexpr(unpack(sexprs))
+    else return sexprs end
+  else
+    return expr
+  end
+end
+
+local function EXPR(fun,sexprConverter)
   return function(...)
-    local str = ""
+    local expr,tfun = sexprConverter(...),{}
     local mt = {
       __type = 'continuation',
-      __tostring = function() return str end,
+      __tostring = function(expr)
+        return json.encode(toSexpr(expr))
+      end,
+      __sexpr = function(...) 
+        return toSexpr(expr)
+      end
     }
-    local tfun = setmetatable({},mt)
+    setmetatable(tfun,mt)
     local cfun,conf = fun(...)         -- compile expr, return function(cont,env)
     if conf then conf(tfun) end        -- extra configurations
     mt.__call = function(_,...) return cfun(...) end
-
-    local nargs = select('#', ...)
-    local args,ordarg = {...},{}
-    local templ2 = templ:gsub("%%(%d+)", function(n)
-      n = tonumber(n)
-      if n < 1 or n > nargs then
-        error(string.format("Template index out of range: %d (template='%s', #args=%d)", 
-          n, templ, nargs))
-      end
-      local a
-      if args[tonumber(n)] == nil then a = "nil" else a = tostring(args[tonumber(n)]) end
-      ordarg[#ordarg+1] = a
-      return "%s"
-    end)
-    str = string.format(templ2, table.unpack(ordarg))
     return tfun
   end
 end
@@ -287,7 +297,70 @@ local function FUNCALL(funExpr,...)
   end
 end
 
+local binops = {
+  ['+'] = function(a,b) return a + b end,
+  ['-'] = function(a,b) return a - b end,
+  ['*'] = function(a,b) return a * b end,
+  ['/'] = function(a,b) return a / b end,
+  ['^'] = function(a,b) return a ^ b end,
+  ['%'] = function(a,b) return a % b end,
+  ['=='] = function(a,b) return a == b end,
+  ['~='] = function(a,b) return a ~= b end,
+  ['<'] = function(a,b) return a < b end,
+  ['>'] = function(a,b) return a > b end,
+  ['<='] = function(a,b) return a <= b end,
+  ['>='] = function(a,b) return a >= b end,
+}
+
+local function BINOP(op,leftExpr,rightExpr)
+  return function(cont,env)
+    return leftExpr,function(leftVal)
+      return rightExpr,function(rightVal)
+        local op = binops[op]
+        if op then
+          local result = op(leftVal, rightVal)
+          return cont(result)
+        else
+          if env.error then env.error("Unknown binary operator: "..tostring(op)) end
+          return nil
+        end
+      end
+    end
+  end
+end
+
+local unops = {
+  ['-'] = function(a) return -a end,
+  ['not'] = function(a) return not a end,
+}
+
+local function UNOP(op,expr)
+  return function(cont,env)
+    return expr,function(val)
+      local op = unops[op]
+      if op then
+        local result = op(val)
+        return cont(result)
+      else
+        if env.error then env.error("Unknown unary operator: "..tostring(op)) end
+        return nil
+      end
+    end
+  end
+end
+
 local function SETQ(name,valExpr)
+  if type(name) == 'table' then
+    return function(cont,env)
+      return evalArgs(valExpr, function(...)
+        local exprs = {...}
+        for i,v in ipairs(name) do
+          env:setVar(v, exprs[i])
+        end
+        return cont(nil)
+      end)
+    end
+  end
   return function(cont,env)
     return valExpr,function(val)
       env:setVar(name, val)
@@ -324,34 +397,17 @@ local function LET(bindings,...)
   end
 end
 
-local function LETV(varNames, exprs, ...)
+local function LETV(varNames, ...)
   -- varNames: list of variable names (strings)
-  -- exprs: list of expressions to evaluate
+  -- ...: list of expressions to evaluate (body)
   -- Honors multiple values from last expression (using evalArgs)
   local body = {...}
   
   return function(cont, env)
-    if #exprs == 0 then
-      -- No expressions - all vars get false (nil)
-      local locals = {}
-      for _, name in ipairs(varNames) do
-        locals[name] = {false}
-      end
-      env:pushFrame(locals)
-      return evalExprs(body, function(...)
-        env:popFrame()
-        return cont(...)
-      end, env)
-    end
-    
-    -- evalArgs automatically captures all values from last expression
-    return evalArgs(exprs, function(...)
-      local values = {...}
-      
       -- Bind variables to values
       local locals = {}
       for i, name in ipairs(varNames) do
-        locals[name] = {values[i] or false}  -- false if not enough values
+        locals[name] = {false}  -- false 
       end
       
       env:pushFrame(locals)
@@ -359,7 +415,6 @@ local function LETV(varNames, exprs, ...)
         env:popFrame()
         return cont(...)
       end, env)
-    end)
   end
 end
 
@@ -967,105 +1022,107 @@ local function MAKE_TABLE(...) -- key1,value1,...,keyN,valueN
 end
 
 local expr = {}
-expr.VAR = EXPR(VAR,"(VAR %1)")
-expr.CONST = EXPR(CONST,"(CONST %1)")
+expr.VAR = EXPR(VAR,function(name) return name end)
+expr.CONST = EXPR(CONST,function(value) return value end)
 expr.QUOTE = expr.CONST
-expr.NIL = function () return expr.CONST(false) end  -- Lisp nil is false
-expr.TRUE = function () return expr.CONST(true) end
-expr.FALSE = function () return expr.CONST(false) end
-expr.IF = EXPR(IF,"(IF %1 THEN %2 ELSE %3)")
-expr.PROGN = EXPR(PROGN,"(PROGN ...)")
+expr.NIL = expr.CONST(false)   -- Lisp nil is false
+expr.TRUE = expr.CONST(true)
+expr.FALSE = expr.CONST(false)
+expr.IF = EXPR(IF,function(cond,thenBranch,elseBranch) return {'IF',cond,thenBranch,elseBranch} end)
+expr.PROGN = EXPR(PROGN,function(...) return {'PROGN',...} end)
 expr.LAMBDA = FUNC  -- Anonymous functions (no EXPR wrapper - self-evaluating)
 expr.FUNC = FUNC    -- Backward compatibility alias
-expr.FUNCALL = EXPR(FUNCALL,"(%1 ...)")
-expr.SETQ = EXPR(SETQ,"(SETQ %1 %2)")
-expr.LET = EXPR(LET,"(LET ...)")
-expr.LETV = EXPR(LETV,"(LETV ...)")
-expr.COND = EXPR(COND,"(COND ...)")
+expr.FUNCALL = EXPR(FUNCALL,function(fun,...) return {'FUNCALL',fun,...} end)
+expr.BINOP = EXPR(BINOP,function(op,left,right) return {op,left,right} end)  -- Binary operators
+expr.UNOP = EXPR(UNOP,function(op,operand) return {op,operand} end)  -- Unary operators
+expr.SETQ = EXPR(SETQ,function(var,value) return {'SETQ',var,value} end)
+expr.LET = EXPR(LET,function(...) return {'LET',...} end)
+expr.LETV = EXPR(LETV,function(...) return {'LETV',...} end)
+expr.COND = EXPR(COND,function(...) return {'COND',...} end)
 -- Smart dispatcher for AND - chooses optimal variant based on arg count
 expr.AND = function(...)
   local n = select('#', ...)
   if n == 0 then
-    return EXPR(AND,"(AND)")()
+    return EXPR(AND,function(...) return {'AND',...} end)(...)
   elseif n == 2 then
-    return EXPR(AND2,"(AND %1 %2)")(...)  
+    return EXPR(AND2,function(a,b) return {'AND',a,b} end)(...)
   else
-    return EXPR(ANDN,"(AND ...)")(...)  
+    return EXPR(ANDN,function(...) return {'AND',...} end)(...)
   end
 end
 -- Smart dispatcher for OR - chooses optimal variant based on arg count
 expr.OR = function(...)
   local n = select('#', ...)
   if n == 0 then
-    return EXPR(OR,"(OR)")()
+    return EXPR(OR,function(...) return {'OR',...} end)(...)
   elseif n == 2 then
-    return EXPR(OR2,"(OR %1 %2)")(...)  
+    return EXPR(OR2,function(a,b) return {'OR',a,b} end)(...)
   else
-    return EXPR(ORN,"(OR ...)")(...)  
+    return EXPR(ORN,function(...) return {'OR',...} end)(...)
   end
 end
-expr.NOT = EXPR(NOT,"(NOT %1)")
-expr.LOOP = EXPR(LOOP,"(LOOP ...)")
+expr.NOT = EXPR(NOT,function(arg) return {'NOT',arg} end)
+expr.LOOP = EXPR(LOOP,function(...) return {'LOOP',...} end)
 -- Smart dispatcher for BREAK - chooses optimal variant based on arg count
 expr.BREAK = function(...)
   local n = select('#', ...)
   if n == 0 then
-    return EXPR(BREAK0,"(BREAK)")()
+    return EXPR(BREAK0,function() return {'BREAK'} end)()
   elseif n == 1 then
-    return EXPR(BREAK1,"(BREAK %1)")(...)
+    return EXPR(BREAK1,function(arg) return {'BREAK',arg} end)(...)
   else
-    return EXPR(BREAK,"(BREAK ...)")(...)  
+    return EXPR(BREAK,function(...) return {'BREAK',...} end)(...)
   end
 end
 -- Smart dispatcher for RETURN - chooses optimal variant based on arg count
 expr.RETURN = function(...)
   local n = select('#', ...)
   if n == 0 then
-    return EXPR(RETURN0,"(RETURN)")()
+    return EXPR(RETURN0,function() return {'RETURN0'} end)()
   elseif n == 1 then
-    return EXPR(RETURN1,"(RETURN %1)")(...)
+    return EXPR(RETURN1,function(...) 
+      return {'RETURN1',...} 
+    end)(...)
   else
-    return EXPR(RETURN,"(RETURN ...)")(...)  
+    return EXPR(RETURN,function(...) return {'RETURN',...} end)(...)
   end
 end
 -- Smart dispatcher for VALUES - chooses optimal variant based on arg count
 expr.VALUES = function(...)
   local n = select('#', ...)
   if n == 0 then
-    return EXPR(VALUES0,"(VALUES)")()
-  elseif n == 1 then
-    return EXPR(VALUES1,"(VALUES %1)")(...)
+    return EXPR(VALUES1,function(arg) return {'VALUES',arg} end)(...)
   else
-    return EXPR(VALUES,"(VALUES ...)")(...)  
+    return EXPR(VALUES,function(...) return {'VALUES',...} end)(...)
   end
 end
-expr.CATCH = EXPR(CATCH,"(CATCH %1 ...)")
-expr.THROW = EXPR(THROW,"(THROW %1 %2)")
-expr.CREATE_COROUTINE = EXPR(CREATE_COROUTINE,"(CREATE-COROUTINE %1)")
-expr.RESUME = EXPR(RESUME,"(RESUME %1 ...)")
+expr.CATCH = EXPR(CATCH,function(tag,...) return {'CATCH',tag,...} end)
+expr.THROW = EXPR(THROW,function(tag,arg) return {'THROW',tag,arg} end)
+expr.CREATE_COROUTINE = EXPR(CREATE_COROUTINE,function(arg) return {'CREATE-COROUTINE',arg} end)
+expr.RESUME = EXPR(RESUME,function(arg,...) return {'RESUME',arg,...} end)
 -- Smart dispatcher for YIELD - chooses optimal variant based on arg count
 expr.YIELD = function(...)
   local n = select('#', ...)
   if n == 0 then
-    return EXPR(YIELD0,"(YIELD)")()
+    return EXPR(YIELD0,function() return {'YIELD'} end)()
   elseif n == 1 then
-    return EXPR(YIELD1,"(YIELD %1)")(...)
+    return EXPR(YIELD1,function(arg) return {'YIELD',arg} end)(...)
   else
-    return EXPR(YIELD,"(YIELD ...)")(...)  
+    return EXPR(YIELD,function(...) return {'YIELD',...} end)(...)
   end
 end
-expr.LIST = EXPR(LIST,"(LIST ...)")
-expr.CONS = EXPR(CONS,"(CONS %1 %2)")
-expr.CAR = EXPR(CAR,"(CAR %1)")
-expr.CDR = EXPR(CDR,"(CDR %1)")
-expr.NULLP = EXPR(NULLP,"(NULL? %1)")
-expr.AREF = EXPR(AREF,"(AREF %1 %2)")
-expr.ASET = EXPR(ASET,"(ASET %1 %2 %3)")
-expr.MAKE_TABLE = EXPR(MAKE_TABLE,"(MAKE-TABLE)")
+expr.LIST = EXPR(LIST,function(...) return {'LIST',...} end)
+expr.CONS = EXPR(CONS,function(arg1,arg2) return {'CONS',arg1,arg2}end)
+expr.CAR = EXPR(CAR,function(arg) return {'CAR',arg}end)
+expr.CDR = EXPR(CDR,function(arg) return {'CDR',arg}end)
+expr.NULLP = EXPR(NULLP,function(arg) return {'NULL?',arg}end)
+expr.AREF = EXPR(AREF,function(arg1,arg2) return {'AREF',arg1,arg2}end)
+expr.ASET = EXPR(ASET,function(arg1,arg2,arg3) return {'ASET',arg1,arg2,arg3}end)
+expr.MAKE_TABLE = EXPR(MAKE_TABLE,function() return {'MAKE-TABLE'} end)
 
 local function createEnvironment(vars,nonVarHandler,sharedTopvars)
-  local self = { 
-    nonVarHandler = nonVarHandler 
+  local self = {
+    nonVarHandler = nonVarHandler
   }
   vars = vars or {}
   -- Use shared topvars if provided, otherwise create new one
@@ -1075,7 +1132,7 @@ local function createEnvironment(vars,nonVarHandler,sharedTopvars)
   local catchStack = {}  -- Stack of {tag, cont} pairs for exception handling
   
   -- Error handler that integrates with catch/throw
-  self.error = function(msg, tag) 
+  self.error = function(msg, tag)
     tag = tag or 'error'
     -- Try to find a matching catch
     for i = #catchStack, 1, -1 do
@@ -1090,11 +1147,11 @@ local function createEnvironment(vars,nonVarHandler,sharedTopvars)
     end
     -- No matching catch - fatal error (original behavior)
     print("ERROR: " .. msg)
-    error(msg, 0) 
+    error(msg, 0)
   end
   
-  function self:getVar(name) 
-    local v = vars[name] 
+  function self:getVar(name)
+    local v = vars[name]
     if v then return v[1] end
     -- If not in frame chain, check topvars (globals)
     v = rawget(self.topvars, name)
@@ -1102,31 +1159,32 @@ local function createEnvironment(vars,nonVarHandler,sharedTopvars)
     -- Finally try nonVarHandler
     if self.nonVarHandler then return self.nonVarHandler(name) end
   end
-  function self:setLocal(name,val) rawset(vars,name,{val}) end
-  function self:setVar(name,val) 
-    local v = vars[name] 
-    if v then v[1] = val else rawset(self.topvars,name,{val}) end 
+  function self:setLocal(name,val)
+    rawset(vars,name,{val})
   end
-  function self:setGlobal(name,val) 
-    local v = rawget(self.topvars,name) 
+  function self:setVar(name,val)
+    local v = vars[name]
     if v then v[1] = val else rawset(self.topvars,name,{val}) end
   end
-  function self:getGlobal(name) 
-    local v = rawget(self.topvars,name) 
-    return v and v[1] 
+  function self:setGlobal(name,val)
+    local v = rawget(self.topvars,name)
+    if v then v[1] = val else rawset(self.topvars,name,{val}) end
+  end
+  function self:getGlobal(name)
+    local v = rawget(self.topvars,name)
+    return v and v[1]
   end
   local fd = 1
   function self:pushFrame(locals)
-    if fd > 2000 then 
+    if fd > 2000 then
       self.error("Max stack depth (2000) exceeded")
     end
     vars = setmetatable(locals, { __index = vars })
     fd = fd + 1
     locals.__fd  = fd
     frameStack[#frameStack + 1] = vars
-    --print(fd)
   end
-  function self:popFrame() 
+  function self:popFrame()
     if #frameStack > 1 then
       frameStack[#frameStack] = nil
       vars = frameStack[#frameStack]
