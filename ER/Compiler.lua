@@ -25,21 +25,32 @@ function comp.number(node)
   return EXPR.CONST(node.value)
 end
 
--- function comp.numer(node)
---   return EXPR.CONST(node.value)
--- end
+function comp.string(node)
+  return EXPR.CONST(node.value)
+end
+
+local consts = { ['number']=true, ['string']=true, ['literal']=true, ['boolean']=true}
+local function keyValue(key)
+  if type(key) ~= 'table' then return EXPR.CONST(key) end
+  if consts[key.type] then return compile(key) end
+  error("Unsupported key type: "..tostring(key.type))
+end
 
 function comp.assign(node)
   local exprs,vars,tabs = {},{},{}
   for i,var in ipairs(node.vars) do
-    if var.type == 'field' then 
+    if var.type == 'tableaccess' then 
       local tab = compile(var.table)
-      local key = EXPR.CONST(var.key)
+      local key = keyValue(var.key)
       local value = compile(node.exprs[i])
       table.remove(node.exprs, i)
       tabs[#tabs+1] = EXPR.ASET(tab, key, value)
-    else
+    elseif var.type == 'variable' then
+      vars[#vars+1] = var.name
+    elseif type(var)=='string' then
       vars[#vars+1] = var
+    else      
+      error("Unsupported assignment target type: "..tostring(var.type))
     end
   end
   for _,expr in ipairs(node.exprs) do
@@ -58,9 +69,9 @@ function comp.assign(node)
   return EXPR.SETQ(vars, exprs)
 end
 
-comp.field = function(node)
+comp.tableaccess = function(node)
   local tab = compile(node.table)
-  local key = EXPR.CONST(node.key)
+  local key = keyValue(node.key)
   return EXPR.AREF(tab, key)
 end
 

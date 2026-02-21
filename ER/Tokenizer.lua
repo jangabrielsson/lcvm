@@ -25,6 +25,8 @@ local keywords = {
   ["."] = {type='dot',value='dot'},
   ["("] = {type='lpar',value='paren_open'},
   [")"] = {type='rpar',value='paren_close'},
+  ["["] = {type='lsqb',value='bracket_open'},
+  ["]"] = {type='rsqb',value='bracket_close'},
   ['local'] = {type='local',value='local'},
   ['function'] = {type='function',value='function'},
   ['end'] = {type='end',value='end'},
@@ -54,7 +56,7 @@ local tknsStrs = {
   return {type=k.type, value=k.value}
 end
 },
-{"+-*/(){}&|!:;,.<>=",".",function(t) 
+{"+-*/(){}&|!:;,.<>=[]",".",function(t) 
   local k = keywords[t]
   if not k then error("Bad token:"..t) end
   return {type=k.type, value=k.value}
@@ -64,7 +66,10 @@ end
   return nil end
 },
 {'"\n"','"(.-)"',function(s) 
-  return s:sub(2,-2) end
+  return {type='string', value=s:sub(2,-2)} end
+},
+{"'\n'","'(.-)'",function(s) 
+  return {type='string', value=s:sub(2,-2)} end
 },
 {identifierChars,"["..identifierChars.."]["..identifierChars.."_%d]*",function(id) 
   local k = keywords[id]

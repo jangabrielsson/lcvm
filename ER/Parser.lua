@@ -175,11 +175,11 @@ p_prefixexp = function(tkns)
       tkns.next()
       local idx = p_expr(tkns)
       tkns.match('rsqb')
-      node = {type='index', table=node, key=idx}
+      node = {type='tableaccess', table=node, key=idx}
     elseif pt.type == 'dot' then     -- '.' Name
       tkns.next()
       local name = tkns.match('identifier')
-      node = {type='field', table=node, key=name and name.value}
+      node = {type='tableaccess', table=node, key=name and name.value}
     elseif pt.type == 'colon' then   -- ':' Name args
       tkns.next()
       local method = tkns.match('identifier').value

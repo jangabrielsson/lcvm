@@ -48,7 +48,7 @@ local function compute(str)
     return nil 
   end,
   env,
-  {debug=true}
+  {debug=false}
 )
   if not ok then
     error("Execution error: "..tostring(err))
@@ -60,42 +60,45 @@ function QuickApp:test1()
   
   function foo(x) return x+1 end
   local tests = {
-    -- {"return 1 + 2", {3}},
-    -- {"return 10 - 4", {6}},
-    -- {"return 5 * 6", {30}},
-    -- {"return 20 / 4", {5}},
-    -- {"return (1 + 2) * 3", {9}},
-    -- {"return 10 / (2 + 3)", {2}},
-    -- {"x = 10; y = 20; return x + y", {30}},
-    -- {"x, y = 10, 20; return x + y", {30}},
-    -- {"x, y = 10, 20; return x * y", {200}},
-    -- {"x, y = 10, 20; return x / y", {0.5}},
-    -- {"x, y = 10, 20; return (x + y) * (x - y)", {-300}},
-    -- {"x, y = 10, 20; return (x * y) / (x + y)", {(10*20)/30}},
-    -- {"x, y = 10, 20; return (x + y) / (x * y)", {(10+20)/(10*20)}},
-    -- {"x, y = 10, 20; return x + y * x - y / x", {10 + (20*10) - (20/10)}},
-    -- {"x, y = 10, 20; return (x + y) * (x - y) / x", {((10+20)*(10-20))/10}},
-    -- {"x, y = 10, 20; return (x * y) / (y - x)", {((10*20)/(20-10))}},
-    -- {"x, y = 10, 20; return (x + -y) / (y + x)", {((10+ -20)/(20+10))}},
-    -- {"return foo(5)", {6}},
-    -- {"return foo(10) + foo(20)", {32}},
-    -- {"return foo(foo(5))", {7}},
-    -- {"return foo(foo(foo(5)))", {8}},
-    -- {"return foo(foo(foo(foo(5))))", {9}},
-    -- {"return 17,42",{17,42}},
-    -- {"return {3}", {{3}}},
-    -- {"return {x=3}", {{x=3}}},
+    {"return 1 + 2", {3}},
+    {"return 10 - 4", {6}},
+    {"return 5 * 6", {30}},
+    {"return 20 / 4", {5}},
+    {"return (1 + 2) * 3", {9}},
+    {"return 10 / (2 + 3)", {2}},
+    {"x = 10; y = 20; return x + y", {30}},
+    {"x, y = 10, 20; return x + y", {30}},
+    {"x, y = 10, 20; return x * y", {200}},
+    {"x, y = 10, 20; return x / y", {0.5}},
+    {"x, y = 10, 20; return (x + y) * (x - y)", {-300}},
+    {"x, y = 10, 20; return (x * y) / (x + y)", {(10*20)/30}},
+    {"x, y = 10, 20; return (x + y) / (x * y)", {(10+20)/(10*20)}},
+    {"x, y = 10, 20; return x + y * x - y / x", {10 + (20*10) - (20/10)}},
+    {"x, y = 10, 20; return (x + y) * (x - y) / x", {((10+20)*(10-20))/10}},
+    {"x, y = 10, 20; return (x * y) / (y - x)", {((10*20)/(20-10))}},
+    {"x, y = 10, 20; return (x + -y) / (y + x)", {((10+ -20)/(20+10))}},
+    {"return foo(5)", {6}},
+    {"return foo(10) + foo(20)", {32}},
+    {"return foo(foo(5))", {7}},
+    {"return foo(foo(foo(5)))", {8}},
+    {"return foo(foo(foo(foo(5))))", {9}},
+    {"return 17,42",{17,42}},
+    {"return {3}", {{3}}},
+    {"return {x=3}", {{x=3}}},
     {"local a = {x=3}; a.x=4; return a.x", {4}},
+    {"local a = {3}; a[1]=4; return a[1]", {4}},
+    {[[local a = {d=42}; a['d']=4; return a['d']], {4}},
+    {'return "abc"', {"abc"}},
     -- Add more complex expressions as needed
   }
   for _,test in ipairs(tests) do
     local code, expected = test[1], test[2]
     local result = compute(code)
     if not equal(result,expected) then
-      print("Test failed for code:", code)
-      print("Expected:", expected[1], "Got:", result)
+      print("\27[31m[X]\27[0m", code)
+      print("Expected:", expected[1], "Got:", table.unpack(result))
     else
-      print("Test passed for code:", code)
+      print("\27[32m[✓]\27[0m", code)
     end
   end
 end

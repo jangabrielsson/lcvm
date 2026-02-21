@@ -9,6 +9,50 @@ This document describes the core primitives provided by the Continuation-based V
 - **Continuations**: Functions of the form `(val, ...) -> next_expr, cont`
 - **Trampoline Execution**: Iterative execution prevents stack overflow
 
+## Quick Reference Index
+
+| Function | Category | Description |
+|---|---|---|
+| [`VAR(name)`](#varname) | Variable | Read a variable from the environment |
+| [`CONST(value)`](#constvalue--quotevalue) | Variable | Constant literal value |
+| [`QUOTE(value)`](#constvalue--quotevalue) | Variable | Alias for `CONST` |
+| [`SETQ(name, valExpr)`](#setqname-valexpr) | Variable | Assign a variable |
+| [`LET(bindings, ...body)`](#letbindings-body) | Variable | Local bindings with initial values |
+| [`LETV(varNames, ...body)`](#letvvarnames-body) | Variable | Declare unbound local variables |
+| [`IF(condExpr, thenExpr, elseExpr)`](#ifcondexpr-thenexpr-elseexpr) | Control Flow | Conditional branch |
+| [`COND(...clauses)`](#condclauses) | Control Flow | Multi-way conditional |
+| [`PROGN(...exprs)`](#prognexprs) | Control Flow | Sequential execution |
+| [`BINOP(op, leftExpr, rightExpr)`](#binopop-leftexpr-rightexpr) | Arithmetic | Binary arithmetic/comparison |
+| [`UNOP(op, expr)`](#unopop-expr) | Arithmetic | Unary negation |
+| [`AND(...exprs)`](#andexprs) | Logical | Short-circuit logical AND |
+| [`OR(...exprs)`](#orexprs) | Logical | Short-circuit logical OR |
+| [`NOT(expr)`](#notexpr) | Logical | Logical negation |
+| [`LAMBDA(params, ...body)`](#funcparams-body--lambdaparams-body) | Functions | Create anonymous function |
+| [`FUNC(params, ...body)`](#funcparams-body--lambdaparams-body) | Functions | Alias for `LAMBDA` |
+| [`FUNCALL(funExpr, ...args)`](#funcallfunexpr-args) | Functions | Call a function |
+| [`LOOP(...body)`](#loopbody) | Loops | Infinite loop |
+| [`BREAK(...exprs)`](#breakexprs) | Loops | Exit loop with value |
+| [`RETURN(...exprs)`](#returnexprs) | Functions | Early return from function |
+| [`VALUES(...exprs)`](#valuesexprs) | Values | Return multiple values |
+| [`CATCH(tag, ...body)`](#catchtag-body) | Exceptions | Establish catch point |
+| [`THROW(tag, valueExpr)`](#throwtag-valueexpr) | Exceptions | Non-local exit to catch |
+| [`CREATE_COROUTINE(func)`](#create-coroutinefunc) | Coroutines | Create a coroutine |
+| [`RESUME(coroExpr, ...args)`](#resumecoroexpr-args) | Coroutines | Resume a coroutine |
+| [`YIELD(...exprs)`](#yieldexprs) | Coroutines | Suspend coroutine and yield values |
+| [`LIST(...exprs)`](#listexprs) | Lists | Create a list |
+| [`CONS(carExpr, cdrExpr)`](#conscardexpr-cdrexpr) | Lists | Prepend element to list |
+| [`CAR(listExpr)`](#carlistexpr) | Lists | First element of list |
+| [`CDR(listExpr)`](#cdrlistexpr) | Lists | Rest of list |
+| [`NULLP(expr)`](#nullpexpr) | Lists | Test for nil/empty list |
+| [`AREF(tableExpr, keyExpr)`](#areftableexpr-keyexpr) | Tables | Read table value by key |
+| [`ASET(tableExpr, keyExpr, valueExpr)`](#asettableexpr-keyexpr-valueexpr) | Tables | Write table value by key |
+| [`MAKE_TABLE(...key-value-pairs)`](#make_tablekeyvalue-pairs) | Tables | Create a Lua table |
+| `NIL` | Constants | Lisp nil (`false`) |
+| `TRUE` | Constants | Boolean true |
+| `FALSE` | Constants | Lisp nil/false |
+
+---
+
 ## Variable Operations
 
 ### VAR(name)
@@ -33,13 +77,14 @@ x  ; => 42
 
 ---
 
-### CONST(value)
+### CONST(value) / QUOTE(value)
 
-Creates a constant expression that evaluates to the given value.
+Creates a constant expression that evaluates to the given value. `QUOTE` is an alias for `CONST`.
 
 **Syntax:**
 ```lua
 expr.CONST(value)
+expr.QUOTE(value)  -- alias
 ```
 
 **Parameters:**
@@ -106,6 +151,36 @@ expr.LET(bindings, ...body)
 **Notes:**
 - Bindings are evaluated in parallel (not sequentially)
 - Use nested `let` for sequential dependencies
+
+---
+
+### LETV(varNames, ...body)
+
+Declares local variables with initial value `false` (unbound/nil) and executes a body.
+
+**Syntax:**
+```lua
+expr.LETV(varNames, ...body)
+```
+
+**Parameters:**
+- `varNames` (array): Array of variable name strings to declare
+- `...body` (expressions): Body expressions executed with variables in scope
+
+**Returns:** Value of the last body expression
+
+**Example:**
+```lisp
+(letv (x y z)
+  (setq x 10)
+  (setq y 20)
+  (+ x y))  ; => 30
+```
+
+**Notes:**
+- All declared variables are initially `false` (Lisp nil)
+- Useful when variables must be assigned conditionally in the body
+- Unlike `let`, no initial-value expressions are provided
 
 ---
 
@@ -197,6 +272,65 @@ expr.PROGN(...exprs)
 
 ---
 
+## Arithmetic and Comparison Operations
+
+### BINOP(op, leftExpr, rightExpr)
+
+Evaluates a binary operation on two expressions.
+
+**Syntax:**
+```lua
+expr.BINOP(op, leftExpr, rightExpr)
+```
+
+**Parameters:**
+- `op` (string): Operator — one of `'+'`, `'-'`, `'*'`, `'/'`, `'^'`, `'%'`, `'=='`, `'~='`, `'<'`, `'>'`, `'<='`, `'>='`
+- `leftExpr` (expression): Left operand
+- `rightExpr` (expression): Right operand
+
+**Returns:** Result of the operation
+
+**Example:**
+```lua
+expr.BINOP('+', expr.CONST(3), expr.CONST(4))  -- 7
+expr.BINOP('<', expr.VAR('x'), expr.CONST(10)) -- true/false
+```
+
+**Notes:**
+- Arithmetic: `+`, `-`, `*`, `/`, `^`, `%`
+- Comparison: `==`, `~=`, `<`, `>`, `<=`, `>=`
+- Errors if operator is unknown
+
+---
+
+### UNOP(op, expr)
+
+Evaluates a unary operation on an expression.
+
+**Syntax:**
+```lua
+expr.UNOP(op, expr)
+```
+
+**Parameters:**
+- `op` (string): Operator — `'-'` (numeric negation) or `'not'` (logical negation)
+- `expr` (expression): Operand expression
+
+**Returns:** Result of the operation
+
+**Example:**
+```lua
+expr.UNOP('-', expr.CONST(5))       -- -5
+expr.UNOP('not', expr.CONST(false)) -- true
+```
+
+**Notes:**
+- `-` performs numeric negation
+- `'not'` performs boolean negation
+- Errors if operator is unknown
+
+---
+
 ## Logical Operations
 
 ### AND(...exprs)
@@ -285,15 +419,18 @@ expr.NOT(expr)
 
 ## Functions
 
-### FUNC(params, ...body)
+### FUNC(params, ...body) / LAMBDA(params, ...body)
+
+`FUNC` and `LAMBDA` are identical aliases — both create a function with parameters and body expressions. `LAMBDA` is the preferred name for anonymous functions.
 
 Creates a function with parameters and body expressions.
 
 **Syntax:**
 ```lua
-expr.FUNC(params, ...body)
+expr.LAMBDA(params, ...body)   -- preferred for anonymous functions
+expr.FUNC(params, ...body)     -- backward-compatibility alias
 -- or with rest args:
-expr.FUNC({...params, '&rest', restName}, ...body)
+expr.LAMBDA({...params, '&rest', restName}, ...body)
 ```
 
 **Parameters:**
@@ -444,18 +581,18 @@ expr.CATCH(tag, ...body)
 
 ---
 
-### THROW(tag, ...exprs)
+### THROW(tag, valueExpr)
 
 Non-local exit to a catch point with matching tag.
 
 **Syntax:**
 ```lua
-expr.THROW(tag, ...exprs)
+expr.THROW(tag, valueExpr)
 ```
 
 **Parameters:**
 - `tag` (symbol): Tag identifying the target catch
-- `...exprs` (optional expressions): Value expressions to return
+- `valueExpr` (optional expression): Single value expression to return (defaults to `false`/nil if omitted)
 
 **Returns:** N/A (transfers control)
 
@@ -871,6 +1008,95 @@ expr.NULLP(expr)
 - `false` (Lisp nil) is considered null
 - Empty lists `{}` are considered null
 - All other values (including 0) are not null
+
+---
+
+## Table Operations
+
+### AREF(tableExpr, keyExpr)
+
+Reads a value from a Lua table by key.
+
+**Syntax:**
+```lua
+expr.AREF(tableExpr, keyExpr)
+```
+
+**Parameters:**
+- `tableExpr` (expression): Expression evaluating to a Lua table
+- `keyExpr` (expression): Expression evaluating to the key
+
+**Returns:** Value at the key, or `false` if absent
+
+**Example:**
+```lisp
+(setq t (make-table "a" 1 "b" 2))
+(aref t "a")  ; => 1
+(aref t "c")  ; => false (missing key)
+```
+
+**Notes:**
+- First argument must be a table; errors otherwise
+- Missing keys return `false` (Lisp nil), not `nil`
+
+---
+
+### ASET(tableExpr, keyExpr, valueExpr)
+
+Sets a value in a Lua table by key.
+
+**Syntax:**
+```lua
+expr.ASET(tableExpr, keyExpr, valueExpr)
+```
+
+**Parameters:**
+- `tableExpr` (expression): Expression evaluating to a Lua table
+- `keyExpr` (expression): Expression evaluating to the key
+- `valueExpr` (expression): Expression evaluating to the value to store
+
+**Returns:** The value that was set
+
+**Example:**
+```lisp
+(setq t (make-table))
+(aset t "x" 42)   ; sets t["x"] = 42, returns 42
+(aref t "x")      ; => 42
+```
+
+**Notes:**
+- First argument must be a table; errors otherwise
+- Mutates the table in place
+
+---
+
+### MAKE_TABLE(...key-value-pairs)
+
+Creates a new Lua table, optionally pre-populated with key-value pairs.
+
+**Syntax:**
+```lua
+expr.MAKE_TABLE()                          -- empty table
+expr.MAKE_TABLE(key1, val1, key2, val2, ...) -- with initial entries
+```
+
+**Parameters:**
+- `...key-value-pairs` (expressions): Alternating key and value expressions
+
+**Returns:** A new Lua table
+
+**Example:**
+```lisp
+(make-table)                        ; => {}
+(make-table "a" 1 "b" 2)            ; => {a=1, b=2}
+(setq t (make-table "x" 10 "y" 20))
+(aref t "x")                        ; => 10
+```
+
+**Notes:**
+- Arguments must come in key-value pairs
+- Keys and values are evaluated before the table is created
+- Returns a mutable Lua table
 
 ---
 
