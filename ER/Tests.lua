@@ -121,7 +121,7 @@ function QuickApp:test1()
     -- {"return (function(a) return a+2 end)(2)", {4}},
     -- {"a = 9; return a", {9}},
     -- {"return a", {9}},
-    {"return (67}",{"a"}}
+    {"return ?.kli",{"a"}}
     -- Add more complex expressions as needed
   }
   for _,test in ipairs(tests) do

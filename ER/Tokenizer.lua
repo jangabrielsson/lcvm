@@ -115,14 +115,33 @@ local tokenMT = {
   end
 }
 
+local function sourceMarker(str, pos, len)
+  local lines = str:split("\n")
+  local tot = 0
+  for i, line in ipairs(lines) do
+    local lineStart = tot + 1
+    local lineEnd   = tot + #line
+    if pos >= lineStart and pos <= lineEnd + 1 then
+      local col = pos - lineStart + 1
+      -- Clamp marker to end of line
+      local markLen = math.min(len or 1, #line - col + 1)
+      if markLen < 1 then markLen = 1 end
+      local marker = string.rep(" ", col - 1) .. string.rep("^", markLen)
+      return "\n" .. line .. "\n" .. marker
+    end
+    tot = tot + #line + 1  -- +1 for the newline character
+  end
+  return ""
+end
+
 local function tokenizer(str)
-  local pos = 1
+  local pos,orgStr = 1, str
   local function tkns()
     if pos > #str then return nil end
     local c = str:sub(pos,pos)
     local candidates = tokenLookup[c]
     if not candidates then
-      error("Unexpected character at position "..pos..": "..c)
+      error("Parser: Unexpected character at position "..pos..": "..c..sourceMarker(orgStr,pos,1))
     end
     for _,cand in ipairs(candidates) do
       local s, e = str:find(cand.pattern, pos)
@@ -139,7 +158,7 @@ local function tokenizer(str)
         end
       end
     end
-    error("No matching token at position "..pos..": "..c)
+    error("Parser: Unexpected character at position "..pos..": "..c..sourceMarker(orgStr,pos,1))
   end
   return tkns
 end
