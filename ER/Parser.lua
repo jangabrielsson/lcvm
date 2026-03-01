@@ -99,6 +99,12 @@ local p_block,p_stat,p_expr,p_functioncall,p_exprlist,p_varlist,p_funcname,p_fun
 local p_unaryexp, p_tableconstructor, p_prefixexp
 local locals = {} -- used for tracking locals in p_block
 
+local function parseError(tkns, msg, token)
+  local t = token or tkns.peek()
+  local ctx = tkns.ctxHint() or ""
+  error(ctx .. msg .. tkns.sourceAt(t), 2)
+end
+
 -- args ::= '(' [explist] ')' | tableconstructor | String
 local function p_args(tkns)
   local t = tkns.peek()
@@ -201,7 +207,7 @@ end
 --                function funcbody | tableconstructor | prefixexp
 local function p_primaryexp(tkns)
   local t = tkns.peek()
-  if not t then error("Unexpected end of input in expression") end
+  if not t then parseError(tkns, "Unexpected end of input in expression") end
   if t.type == 'number' or t.type == 'string' or t.type == 'nil' or
      t.type == 'true' or t.type == 'false' then
     tkns.next()
@@ -217,7 +223,7 @@ local function p_primaryexp(tkns)
   else
     local node = p_prefixexp(tkns)
     if node then return node end
-    error("Unexpected token in expression: " .. t.type)
+    parseError(tkns, "Unexpected token '" .. tkns.lookupTkType(t.type) .. "' in expression", t)
   end
 end
 
@@ -335,6 +341,7 @@ end
 -- funcbody ::= '(' [parlist] ')' block end
 -- parlist  ::= namelist [',' '...'] | '...'
 function p_funcbody(tkns)
+  tkns.pushCtx("function body")
   tkns.expect('lpar')
   local params = {}
   local hasVararg = false
@@ -358,6 +365,7 @@ function p_funcbody(tkns)
   tkns.expect('rpar')
   local body = p_block(tkns)
   tkns.expect('end')
+  tkns.popCtx()
   return {type='funcbody', params=params, hasVararg=hasVararg, body=body}
 end
 
@@ -409,29 +417,38 @@ end
 function p_stat(tkns)
   local t = tkns.peek()
   if t.type == 'do' then
+    tkns.pushCtx("do block")
     tkns.next()
     local block = p_block(tkns)
     tkns.expect('end')
+    tkns.popCtx()
     return {type='do', body=block}
   elseif t.type == 'loop' then
+    tkns.pushCtx("loop")
     tkns.next()
     local block = p_block(tkns)
     tkns.expect('end')
+    tkns.popCtx()
     return {type='loop', body=block}
   elseif t.type == 'while' then
+    tkns.pushCtx("while loop")
     tkns.next()
     local test = p_expr(tkns)
     tkns.expect('do')
     local body = p_block(tkns)
     tkns.expect('end')
+    tkns.popCtx()
     return {type='while', test=test, body=body}
   elseif t.type == 'repeat' then
+    tkns.pushCtx("repeat/until")
     tkns.next()
     local body = p_block(tkns)
     tkns.expect('until')
     local test = p_expr(tkns)
+    tkns.popCtx()
     return {type='repeat', test=test, body=body}
   elseif t.type == 'if' then
+    tkns.pushCtx("if statement")
     tkns.next()
     local test = p_expr(tkns)
     tkns.expect('then')
@@ -449,8 +466,10 @@ function p_stat(tkns)
       elsebody = p_block(tkns)
     end
     tkns.expect('end')
+    tkns.popCtx()
     return {type='if', test=test, body=body, elseifs=elseifs, else_body=elsebody}
   elseif t.type == 'for' then
+    tkns.pushCtx("for loop")
     tkns.next()
     local firstName = tkns.expect('identifier').value
     if tkns.match('assign') then
@@ -465,6 +484,7 @@ function p_stat(tkns)
       tkns.expect('do')
       local body = p_block(tkns)
       tkns.expect('end')
+      tkns.popCtx()
       return {type='for_numeric', var=firstName, start=start, limit=limit, step=step, body=body}
     else
       -- Generic for: for namelist in explist do block end
@@ -477,23 +497,29 @@ function p_stat(tkns)
       tkns.expect('do')
       local body = p_block(tkns)
       tkns.expect('end')
+      tkns.popCtx()
       return {type='for_generic', names=names, explist=explist, body=body}
     end
   elseif t.type == 'function' then
+    tkns.pushCtx("function definition")
     tkns.next()
     local funcname = p_funcname(tkns)
     local funcbody = p_funcbody(tkns)
+    tkns.popCtx()
     return {type='functiondef', name=funcname, body=funcbody}
   elseif t.type == 'local' then
     tkns.next()
     if tkns.peek().type == 'function' then
       -- local function Name funcbody
+      tkns.pushCtx("local function")
       tkns.next()
       local name = tkns.expect('identifier').value
       local body = p_funcbody(tkns)
       table.insert(locals, name)
+      tkns.popCtx()
       return {type='localfunc', name=name, body=body}
     else
+      tkns.pushCtx("local declaration")
       local varlist = p_varlist(tkns)
       for _,var in ipairs(varlist) do
         table.insert(locals, var)
@@ -502,6 +528,7 @@ function p_stat(tkns)
       if tkns.match('assign') then
         explist = p_exprlist(tkns)
       end
+      tkns.popCtx()
       return {type='assign', vars=varlist, exprs=explist}
     end
   elseif t.type == 'identifier' then
@@ -510,26 +537,28 @@ function p_stat(tkns)
     local nt = tkns.peek()
     if nt and (nt.type == 'comma' or nt.type == 'assign') then
       -- varlist '=' explist  (LHS can be var, field index, array index)
+      tkns.pushCtx("assignment")
       local lvalues = {first}
       while tkns.match('comma') do
         local lv = p_prefixexp(tkns)
         if lv.type == 'call' or lv.type == 'methodcall' then
-          error("Invalid assignment target")
+          parseError(tkns, "Invalid assignment target", nt)
         end
         table.insert(lvalues, lv)
       end
       tkns.expect('assign')
       local explist = p_exprlist(tkns)
+      tkns.popCtx()
       return {type='assign', vars=lvalues, exprs=explist}
     else
       -- functioncall: must end with a call or methodcall
       if first.type ~= 'call' and first.type ~= 'methodcall' then
-        error("Expected function call or assignment, got: " .. tostring(first.type))
+        parseError(tkns, "Expected function call or assignment, got '" .. tostring(first.type) .. "'", nt)
       end
       return first
     end
   end
-  return nil
+  parseError(tkns, "Unexpected token '" .. tkns.lookupTkType(t.type) .. "' in statement", t)
 end
 
 
@@ -545,7 +574,7 @@ function p_block(tkns)
     local pt = tkns.peek()
     local stat = p_stat(tkns)
     if stat then table.insert(stats, stat)
-    else error("Unexpected token in block: "..tostring(pt and pt.type)) end
+    else parseError(tkns, "Unexpected token '" .. tostring(pt and tkns.lookupTkType(pt.type) or "<unknown>") .. "' in block", pt) end
     tkns.match('semicolon')
   end
   if tkns.match('return') then

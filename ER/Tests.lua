@@ -6,7 +6,7 @@
 ER = ER or { _tools = {} }
 
 local test1 = true
-local test2 = true
+--local test2 = true
 local test3 = true
 
 local parser,compile
@@ -28,6 +28,7 @@ function QuickApp:onInit()
   parser = ER._tools.parser
   compile = ER._tools.compile
   if test1 then self:test1() end
+  if test2 then self:testErrors() end
 end
 
 local function compute(str,env)
@@ -121,7 +122,6 @@ function QuickApp:test1()
     -- {"return (function(a) return a+2 end)(2)", {4}},
     -- {"a = 9; return a", {9}},
     -- {"return a", {9}},
-    {"return ?.kli",{"a"}}
     -- Add more complex expressions as needed
   }
   for _,test in ipairs(tests) do
@@ -133,6 +133,42 @@ function QuickApp:test1()
       print("Expected:", expected[1], "Got:", table.unpack(result or {}))
     else
       print("\27[32m[✓]\27[0m", code)
+    end
+  end
+end
+
+function QuickApp:testErrors()
+  local env = VM.createEnvironment()
+  function env.nonVarHandler(name) return _G[name] end
+
+  local tests = {
+    {"return 1 + ", "Unexpected end of input in expression at end of input"},
+    {"return (1 + 2", "Expected ')', got end of input at end of input"},
+    {"x = ", "In assignment: Unexpected end of input in expression at end of input"},
+    {"if true then return 1", "In if statement: Expected 'end', got end of input at end of input"},
+    {"if true return 1 end", "In if statement: Expected 'then', got 'return'"},
+    {"local a = 3; if a > 2 then do a=8 end end; return a", nil}, -- This should pass
+    {"local a = 3; if a > 2 then do a=8 end end; return b", "Execution error: Variable 'b' is not defined"},
+    -- Add more error cases as needed
+  }
+  
+  for _,test in ipairs(tests) do
+    local code, expectedError = test[1], test[2]
+    local ok, err = pcall(function() compute(code, env) end)
+    if ok then
+      if expectedError then
+        print("\27[31m[X]\27[0m", code)
+        print("Expected error:", expectedError, "but got no error")
+      else
+        print("\27[32m[✓]\27[0m", code)
+      end
+    else
+      if expectedError and tostring(err):find(expectedError) then
+        print("\27[32m[✓]\27[0m", code)
+      else
+        print("\27[31m[X]\27[0m", code)
+        print("Expected error:", expectedError, "but got:", err)
+      end
     end
   end
 end

@@ -166,6 +166,29 @@ end
 local function tokenStream(str)
   local tkns = tokenizer(str)
   local buffer = {}
+  local ctxStack = {}
+
+  local function posToLineCol(pos)
+    local line, col = 1, 1
+    for i = 1, pos - 1 do
+      if str:sub(i,i) == '\n' then line = line + 1; col = 1
+      else col = col + 1 end
+    end
+    return line, col
+  end
+
+  local function sourceAt(token)
+    if not token then return " at end of input" end
+    local line, col = posToLineCol(token.pos)
+    local marker = sourceMarker(str, token.pos, token.len)
+    return string.format(" at line %d, col %d%s", line, col, marker)
+  end
+
+  local function ctxHint()
+    if #ctxStack == 0 then return nil end
+    return "In " .. table.concat(ctxStack, " > ") .. ": "
+  end
+
   local function peek(n)
     n = n or 1
     while #buffer < n do
@@ -196,15 +219,25 @@ local function tokenStream(str)
       return t
     else
       local exp = lookupTkType(expectedType) or expectedType
-      local got = t and ("'"..t.tk.."'") or "end of input"
-      error("Expected '"..exp.."', got "..got, 2)
+      local gotStr = t and ("'" .. (t.tk or tostring(t.value)) .. "'") or "end of input"
+      local ctx = ctxHint() or ""
+      local loc = t and sourceAt(t) or " at end of input"
+      error(ctx .. "Expected '" .. exp .. "', got " .. gotStr .. loc, 2)
     end
   end
+  local function pushCtx(s) table.insert(ctxStack, s) end
+  local function popCtx()  table.remove(ctxStack) end
+
   return {
     peek = peek,
     next = next,
     match = match,
     expect = expect,
+    pushCtx = pushCtx,
+    popCtx = popCtx,
+    sourceAt = sourceAt,
+    ctxHint = ctxHint,
+    lookupTkType = lookupTkType,
   }
 end
 
