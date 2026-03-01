@@ -198,6 +198,84 @@ comp['while'] = function(node)
   return EXPR.LOOP(compile(body))
 end
 
+comp['for_numeric'] = function(node)
+  -- for var = start, limit [, step] do body end
+  -- Desugars to:
+  --   letv(var, __lim, __stp)
+  --   setq var=start, __lim=limit, __stp=step
+  --   loop
+  --     if __stp*var > __stp*__lim then break end
+  --     body
+  --     var = var + __stp
+  --   end
+  local var = node.var
+  local lim = '__for_lim__'
+  local stp = '__for_stp__'
+  local startExpr = compile(node.start)
+  local limitExpr = compile(node.limit)
+  local stepExpr  = node.step and compile(node.step) or EXPR.CONST(1)
+  local bodyExpr  = compile(node.body)
+  local breakCond = EXPR.BINOP('>',
+    EXPR.BINOP('*', EXPR.VAR(stp), EXPR.VAR(var)),
+    EXPR.BINOP('*', EXPR.VAR(stp), EXPR.VAR(lim))
+  )
+  return EXPR.LETV({var, lim, stp},
+    EXPR.SETQ(var,  startExpr),
+    EXPR.SETQ(lim,  limitExpr),
+    EXPR.SETQ(stp,  stepExpr),
+    EXPR.LOOP(
+      EXPR.IF(breakCond,
+        EXPR.BREAK(),
+        EXPR.PROGN(
+          bodyExpr,
+          EXPR.SETQ(var, EXPR.BINOP('+', EXPR.VAR(var), EXPR.VAR(stp)))
+        )
+      )
+    )
+  )
+end
+
+comp['for_generic'] = function(node)
+  -- for v1,v2,... in explist do body end
+  -- Desugars to:
+  --   letv(__iter, __state, __ctrl, v1, v2, ...)
+  --   setq {__iter,__state,__ctrl} = explist  (up to 3 values from iterator factory)
+  --   loop
+  --     setq {v1,v2,...} = __iter(__state, __ctrl)
+  --     if v1 == nil then break end
+  --     __ctrl = v1
+  --     body
+  --   end
+  local names   = node.names
+  local iterVar = '__for_iter__'
+  local stateVar= '__for_state__'
+  local ctrlVar = '__for_ctrl__'
+  local allLocals = {iterVar, stateVar, ctrlVar}
+  for _,n in ipairs(names) do allLocals[#allLocals+1] = n end
+  -- compile init explist (may be 1..3 expressions: iter [, state [, init]])
+  local initExprs = {}
+  for _,e in ipairs(node.explist) do initExprs[#initExprs+1] = compile(e) end
+  local bodyExpr = compile(node.body)
+  -- call iter each iteration and destructure into names
+  local iterCall = EXPR.FUNCALL(EXPR.VAR(iterVar), EXPR.VAR(stateVar), EXPR.VAR(ctrlVar))
+  return EXPR.LETV(allLocals,
+    EXPR.SETQ({iterVar, stateVar, ctrlVar}, initExprs),
+    EXPR.LOOP(
+      EXPR.PROGN(
+        EXPR.SETQ(names, {iterCall}),
+        EXPR.IF(
+          EXPR.NULLP(EXPR.VAR(names[1])),
+          EXPR.BREAK(),
+          EXPR.PROGN(
+            EXPR.SETQ(ctrlVar, EXPR.VAR(names[1])),
+            bodyExpr
+          )
+        )
+      )
+    )
+  )
+end
+
 comp['break'] = function(node)
   local a = node
   return EXPR.BREAK()

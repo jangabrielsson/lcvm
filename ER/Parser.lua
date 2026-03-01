@@ -108,7 +108,7 @@ local function p_args(tkns)
     if tkns.peek().type ~= 'rpar' then
       args = p_exprlist(tkns)
     end
-    tkns.match('rpar')
+    tkns.expect('rpar')
     return args
   elseif t and t.type == 'lbra' then
     return { p_tableconstructor(tkns) }
@@ -122,7 +122,7 @@ end
 -- tableconstructor ::= '{' [fieldlist] '}'
 -- field ::= '[' exp ']' '=' exp | Name '=' exp | exp
 p_tableconstructor = function(tkns)
-  tkns.match('lbra')
+  tkns.expect('lbra')
   local fields = {}
   while tkns.peek() and tkns.peek().type ~= 'rbra' do
     local t = tkns.peek()
@@ -130,8 +130,8 @@ p_tableconstructor = function(tkns)
     if t.type == 'lbra' then  -- '[' exp ']' '=' exp  (lbra = '[')
       tkns.next()
       local key = p_expr(tkns)
-      tkns.match('rbra')
-      tkns.match('assign')
+      tkns.expect('rbra')
+      tkns.expect('assign')
       local val = p_expr(tkns)
       field = {type='field', key=key, value=val}
     elseif t.type == 'identifier' and tkns.peek(2) and tkns.peek(2).type == 'assign' then
@@ -146,7 +146,7 @@ p_tableconstructor = function(tkns)
     table.insert(fields, field)
     if not (tkns.match('comma') or tkns.match('semicolon')) then break end
   end
-  tkns.match('rbra')
+  tkns.expect('rbra')
   return {type='table', fields=fields}
 end
 
@@ -174,15 +174,15 @@ p_prefixexp = function(tkns)
     if pt.type == 'lsqb' then        -- '[' exp ']'
       tkns.next()
       local idx = p_expr(tkns)
-      tkns.match('rsqb')
+      tkns.expect('rsqb')
       node = {type='tableaccess', table=node, key=idx}
     elseif pt.type == 'dot' then     -- '.' Name
       tkns.next()
-      local name = tkns.match('identifier')
-      node = {type='tableaccess', table=node, key=name and name.value}
+      local name = tkns.expect('identifier')
+      node = {type='tableaccess', table=node, key=name.value}
     elseif pt.type == 'colon' then   -- ':' Name args
       tkns.next()
-      local method = tkns.match('identifier').value
+      local method = tkns.expect('identifier').value
       local args = p_args(tkns)
       node = {type='methodcall', object=node, method=method, args=args}
     else
@@ -321,31 +321,31 @@ end
 -- funcname ::= Name {'.' Name} [':' Name]
 function p_funcname(tkns)
   local names = {}
-  table.insert(names, tkns.match('identifier').value)
+  table.insert(names, tkns.expect('identifier').value)
   while tkns.match('dot') do
-    table.insert(names, tkns.match('identifier').value)
+    table.insert(names, tkns.expect('identifier').value)
   end
   local methodName = nil
   if tkns.match('colon') then
-    methodName = tkns.match('identifier').value
+    methodName = tkns.expect('identifier').value
   end
   return {type='funcname', names = names, method = methodName}
 end
 
 -- funcbody ::= '(' [parlist] ')' block end
 function p_funcbody(tkns)
-  tkns.match('lpar')
+  tkns.expect('lpar')
   -- Skipping parlist for simplicity
-  tkns.match('rpar')
+  tkns.expect('rpar')
   local body = p_block(tkns)
-  tkns.match('end')
+  tkns.expect('end')
   return {type='funcbody', body=body}
 end
 
 function p_varlist(tkns)
   local vars = {}
   repeat
-    local var = tkns.match('identifier')
+    local var = tkns.expect('identifier')
     table.insert(vars, var.value)
   until not tkns.match('comma')
   return vars
@@ -392,50 +392,74 @@ function p_stat(tkns)
   if t.type == 'do' then
     tkns.next()
     local block = p_block(tkns)
-    tkns.match('end')
+    tkns.expect('end')
     return {type='do', body=block}
   elseif t.type == 'loop' then
     tkns.next()
     local block = p_block(tkns)
-    if not tkns.match('end') then
-      error("Expected 'end' to close 'loop' statement")
-    end
+    tkns.expect('end')
     return {type='loop', body=block}
   elseif t.type == 'while' then
     tkns.next()
     local test = p_expr(tkns)
-    tkns.match('do')
+    tkns.expect('do')
     local body = p_block(tkns)
-    tkns.match('end')
+    tkns.expect('end')
     return {type='while', test=test, body=body}
   elseif t.type == 'repeat' then
     tkns.next()
     local body = p_block(tkns)
-    tkns.match('until')
+    tkns.expect('until')
     local test = p_expr(tkns)
     return {type='repeat', test=test, body=body}
   elseif t.type == 'if' then
     tkns.next()
     local test = p_expr(tkns)
-    tkns.match('then')
+    tkns.expect('then')
     local body = p_block(tkns)
     local elseifs = {}
     local elsebody = nil
     while tkns.peek() and tkns.peek().type == 'elseif' do
       tkns.next()
       local etest = p_expr(tkns)
-      tkns.match('then')
+      tkns.expect('then')
       local ebody = p_block(tkns)
       table.insert(elseifs, {test=etest, body=ebody})
     end
     if tkns.match('else') then
       elsebody = p_block(tkns)
     end
-    if not tkns.match('end') then
-      error("Expected 'end' to close 'if' statement")
-    end
+    tkns.expect('end')
     return {type='if', test=test, body=body, elseifs=elseifs, else_body=elsebody}
   elseif t.type == 'for' then
+    tkns.next()
+    local firstName = tkns.match('identifier').value
+    if tkns.match('assign') then
+      -- Numeric for: for Name '=' exp ',' exp [',' exp] do block end
+      local start = p_expr(tkns)
+      tkns.expect('comma')
+      local limit = p_expr(tkns)
+      local step = nil
+      if tkns.match('comma') then
+        step = p_expr(tkns)
+      end
+      tkns.expect('do')
+      local body = p_block(tkns)
+      tkns.expect('end')
+      return {type='for_numeric', var=firstName, start=start, limit=limit, step=step, body=body}
+    else
+      -- Generic for: for namelist in explist do block end
+      local names = {firstName}
+      while tkns.match('comma') do
+        names[#names+1] = tkns.match('identifier').value
+      end
+      tkns.expect('in')
+      local explist = p_exprlist(tkns)
+      tkns.expect('do')
+      local body = p_block(tkns)
+      tkns.expect('end')
+      return {type='for_generic', names=names, explist=explist, body=body}
+    end
   elseif t.type == 'function' then
     tkns.next()
     local funcname = p_funcname(tkns)
@@ -446,7 +470,7 @@ function p_stat(tkns)
     if tkns.peek().type == 'function' then
       -- local function Name funcbody
       tkns.next()
-      local name = tkns.match('identifier').value
+      local name = tkns.expect('identifier').value
       local body = p_funcbody(tkns)
       table.insert(locals, name)
       return {type='localfunc', name=name, body=body}
@@ -475,7 +499,7 @@ function p_stat(tkns)
         end
         table.insert(lvalues, lv)
       end
-      tkns.match('assign')
+      tkns.expect('assign')
       local explist = p_exprlist(tkns)
       return {type='assign', vars=lvalues, exprs=explist}
     else

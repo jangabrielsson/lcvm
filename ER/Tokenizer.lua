@@ -161,10 +161,21 @@ local function tokenStream(str)
       return nil
     end
   end
+  local function expect(expectedType)
+    local t = peek(1)
+    if t and t.type == expectedType then
+      next()
+      return t
+    else
+      local got = t and ("'"..t.type.."'") or "end of input"
+      error("Expected '"..expectedType.."', got "..got, 2)
+    end
+  end
   return {
     peek = peek,
     next = next,
     match = match,
+    expect = expect,
   }
 end
 

@@ -109,7 +109,9 @@ function QuickApp:test1()
     --{"local a = 0; loop a=a+1; if a > 2 then print(7) end; print(9) end; return 8",{7}},
     --{"if true==true then print(7) end; return 7",{7}},
     --{"local a = 0; repeat a = a + 1; print(a) until a > 100; return 7",{7}}
-    {"local a = 0; while a < 100 do a = a + 1; print(a) end; return 7",{7}}
+    --{"local a = 0; while a < 100 do a = a + 1; print(a) end; return 7",{7}}
+    -- {"for x=10,1,-1 do print(x) end; return 7",{7}}
+    {"for k,v in pairs({a=1,b=2}) do print(k,v) end; return 7",{7}}
     -- Add more complex expressions as needed
   }
   for _,test in ipairs(tests) do
