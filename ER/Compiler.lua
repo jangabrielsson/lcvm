@@ -117,6 +117,8 @@ end
 
 local opmap = {
   ['not'] = 'not',
+  ['and'] = 'and',
+  ['or'] = 'or',  
   ['plus'] = '+',
   ['minus'] = '-',
   ['multiply'] = '*',
@@ -142,6 +144,18 @@ function comp.unop(node)
   local op = opmap[node.op]
   if not op then error("Unknown unary operator: "..tostring(node.op)) end
   return EXPR.UNOP(op, operand)
+end
+
+comp['and'] = function(node)
+  local left = compile(node.left)
+  local right = compile(node.right)
+  return EXPR.AND(left, right)
+end
+
+comp['or'] = function(node)
+  local left = compile(node.left)
+  local right = compile(node.right)
+  return EXPR.OR(left, right)
 end
 
 function comp.variable(node)
@@ -279,6 +293,49 @@ end
 comp['break'] = function(node)
   local a = node
   return EXPR.BREAK()
+end
+
+local function compFuncbody(node)
+  -- node = {type='funcbody', params={...}, hasVararg=bool, body=...}
+  local params = node.params or {}
+  if node.hasVararg then
+    params = {table.unpack(params)}
+    params[#params+1] = '&rest'
+    params[#params+1] = '__vararg__'
+  end
+  return EXPR.LAMBDA(params, compile(node.body))
+end
+
+comp['function'] = function(node)
+  return compFuncbody(node.body)
+end
+
+comp['functiondef'] = function(node)
+  -- function a.b.c() end  -> a.b.c = function() end
+  local funcname = node.name
+  local lambda = compFuncbody(node.body)
+  if #funcname.names == 1 and not funcname.method then
+    return EXPR.SETQ(funcname.names[1], lambda)
+  else
+    -- a.b.c  -> ASET(AREF(VAR('a'),'b'), 'c', lambda)
+    local obj = EXPR.VAR(funcname.names[1])
+    for i = 2, #funcname.names - 1 do
+      obj = EXPR.AREF(obj, EXPR.CONST(funcname.names[i]))
+    end
+    local lastName = funcname.method or funcname.names[#funcname.names]
+    if funcname.method then
+      -- method: insert 'self' as first param
+      local p = {'self', table.unpack(node.body.params or {})}
+      local mb = {type='funcbody', params=p, hasVararg=node.body.hasVararg, body=node.body.body}
+      lambda = compFuncbody(mb)
+      obj = EXPR.AREF(obj, EXPR.CONST(funcname.names[#funcname.names]))
+    end
+    return EXPR.ASET(obj, EXPR.CONST(lastName), lambda)
+  end
+end
+
+comp['localfunc'] = function(node)
+  return EXPR.SETQ(node.name, compFuncbody(node.body))
 end
 
 function compile(ast)

@@ -301,7 +301,7 @@ local function p_andexp(tkns)
   while tkns.peek() and tkns.peek().type == 'op' and tkns.peek().value == 'and' do
     tkns.next()
     local right = p_relexp(tkns)
-    left = {type='binop', op='and', left=left, right=right}
+    left = {type='and', left=left, right=right}
   end
   return left
 end
@@ -313,7 +313,7 @@ function p_expr(tkns)
   while tkns.peek() and tkns.peek().type == 'op' and tkns.peek().value == 'or' do
     tkns.next()
     local right = p_andexp(tkns)
-    left = {type='binop', op='or', left=left, right=right}
+    left = {type='or', left=left, right=right}
   end
   return left
 end
@@ -333,13 +333,32 @@ function p_funcname(tkns)
 end
 
 -- funcbody ::= '(' [parlist] ')' block end
+-- parlist  ::= namelist [',' '...'] | '...'
 function p_funcbody(tkns)
   tkns.expect('lpar')
-  -- Skipping parlist for simplicity
+  local params = {}
+  local hasVararg = false
+  if tkns.peek() and tkns.peek().type ~= 'rpar' then
+    if tkns.peek().type == 'vararg' then
+      tkns.next()
+      hasVararg = true
+    else
+      -- namelist
+      params[#params+1] = tkns.expect('identifier').value
+      while tkns.match('comma') do
+        if tkns.peek().type == 'vararg' then
+          tkns.next()
+          hasVararg = true
+          break
+        end
+        params[#params+1] = tkns.expect('identifier').value
+      end
+    end
+  end
   tkns.expect('rpar')
   local body = p_block(tkns)
   tkns.expect('end')
-  return {type='funcbody', body=body}
+  return {type='funcbody', params=params, hasVararg=hasVararg, body=body}
 end
 
 function p_varlist(tkns)
@@ -433,7 +452,7 @@ function p_stat(tkns)
     return {type='if', test=test, body=body, elseifs=elseifs, else_body=elsebody}
   elseif t.type == 'for' then
     tkns.next()
-    local firstName = tkns.match('identifier').value
+    local firstName = tkns.expect('identifier').value
     if tkns.match('assign') then
       -- Numeric for: for Name '=' exp ',' exp [',' exp] do block end
       local start = p_expr(tkns)
@@ -451,7 +470,7 @@ function p_stat(tkns)
       -- Generic for: for namelist in explist do block end
       local names = {firstName}
       while tkns.match('comma') do
-        names[#names+1] = tkns.match('identifier').value
+        names[#names+1] = tkns.expect('identifier').value
       end
       tkns.expect('in')
       local explist = p_exprlist(tkns)

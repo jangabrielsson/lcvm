@@ -30,15 +30,12 @@ function QuickApp:onInit()
   if test1 then self:test1() end
 end
 
-local function compute(str)
+local function compute(str,env)
   local ast = parser(str)
   local code = compile(ast)
   local res = nil
-  
+  --print(code)
   --print(json.encodeFormated(ast))
-  -- Create environment
-  local env = VM.createEnvironment()
-  function env.nonVarHandler(name) return _G[name] end
   -- Execute
   local ok, err, steps = VM.execute(
   code,
@@ -57,7 +54,10 @@ local function compute(str)
 end
 
 function QuickApp:test1()
-  
+    -- Create environment
+  local env = VM.createEnvironment()
+  function env.nonVarHandler(name) return _G[name] end
+
   function foo(x) return x+1 end
   local tests = {
     -- {"return 1 + 2", {3}},
@@ -77,6 +77,13 @@ function QuickApp:test1()
     -- {"x, y = 10, 20; return (x + y) * (x - y) / x", {((10+20)*(10-20))/10}},
     -- {"x, y = 10, 20; return (x * y) / (y - x)", {((10*20)/(20-10))}},
     -- {"x, y = 10, 20; return (x + -y) / (y + x)", {((10+ -20)/(20+10))}},
+    -- {"return true & false", {false}},
+    -- {"return true | false", {true}},
+    -- {"return false | false", {false}},
+    -- {"return false | false | true", {true}},
+    -- {"return false | false & true", {false}},
+    -- {"return ! false", {true}},
+    -- {"return ! true", {false}},
     -- {"return foo(5)", {6}},
     -- {"return foo(10) + foo(20)", {32}},
     -- {"return foo(foo(5))", {7}},
@@ -88,7 +95,7 @@ function QuickApp:test1()
     -- {"local a = {x=3}; a.x=4; return a.x", {4}},
     -- {"local a = {3}; a[1]=4; return a[1]", {4}},
     -- {"local a = {3,5}; a[1+1]=4; return a[1+1]", {4}},
-    -- {[[local a = {d=42}; a['d']=4; return a['d']], {4}},
+    -- {[[local a = {d=42}; a['d']=4; return a['d'] ]], {4}},
     -- {[[local a = {d={c=42}}; a.d.c=4; return a.d.c]], {4}},
     -- {'return "abc"', {"abc"}},
     -- {"if 2==2 then return 4 else return 5 end", {4}},    
@@ -102,21 +109,24 @@ function QuickApp:test1()
     -- {"if 2>2 then return 4 elseif 2==2 then return 5 else return 6 end", {5}},
     -- {"if 2>2 then return 4 elseif 2>2 then return 5 else return 6 end", {6}},
     -- {"if 2==2 then return 4 end",{4}},
-    -- {"if 2>2 then return 4 end",{}},
-    -- {"print('Hello, World!'); return 4",{4}},
+    -- {"if 2>2 then return 4 end",{false}},
     -- {"if 0 == 0 then return end",{}},
-    -- {"local a = 3; if a > 2 then do print(42) end end; return 7",{7}},
-    --{"local a = 0; loop a=a+1; if a > 2 then print(7) end; print(9) end; return 8",{7}},
-    --{"if true==true then print(7) end; return 7",{7}},
-    --{"local a = 0; repeat a = a + 1; print(a) until a > 100; return 7",{7}}
-    --{"local a = 0; while a < 100 do a = a + 1; print(a) end; return 7",{7}}
-    -- {"for x=10,1,-1 do print(x) end; return 7",{7}}
-    {"for k,v in pairs({2,3,4,5}) do print(k,v) end; return 7",{7}}
+    -- {"local a = 3; if a > 2 then do a=8 end end; return a",{8}},
+    -- {"local a=0; if true==true then a=7 end; return a",{7}},
+    -- {"local a = 0; repeat a = a + 1;  until a > 100; return a",{101}},
+    -- {"local a = 0; while a < 100 do a = a + 1 end; return a",{100}},
+    -- {"local a=0; for x=10,1,-1 do a=a+x end; return a",{55}},
+    -- {"local a=0; for k,v in pairs({2,3,4,5}) do a=a+v end; return a",{14}},
+    -- {"local function f(a) return a+1 end; return f(2)", {3}},
+    -- {"return (function(a) return a+2 end)(2)", {4}},
+    {"a = 9; return a", {9}},
+    {"return a", {9}},
     -- Add more complex expressions as needed
   }
   for _,test in ipairs(tests) do
     local code, expected = test[1], test[2]
-    local result = compute(code)
+    local result = compute(code,env)
+    --env:dumpVars()
     if not equal(result,expected) then
       print("\27[31m[X]\27[0m", code)
       print("Expected:", expected[1], "Got:", table.unpack(result or {}))

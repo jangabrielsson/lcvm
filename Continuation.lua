@@ -39,7 +39,7 @@ local function execute(expr, cont, env, options, ...)
   local onStep = options.onStep
   
   -- Set top-level function continuation so RETURN works at the top level
-  env.__funcCont = env.__funcCont or cont
+  env.__funcCont = cont
 
   local i = 0
   local args = {...}
@@ -1244,6 +1244,14 @@ local function createEnvironment(vars,nonVarHandler,sharedTopvars)
     if self.error then e.error = self.error end
     return e
   end
+
+  function self:dumpVars()
+    for k, v in pairs(vars) do
+      local val = type(v) == 'table' and v[1] or v
+      print(tostring(k) .. "=" .. tostring(val))
+    end
+  end
+
   return self
 end
 
