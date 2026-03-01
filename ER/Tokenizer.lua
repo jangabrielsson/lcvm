@@ -51,6 +51,13 @@ local keywords = {
   ['or'] = {type='op',value='or'},
 }
 
+local function lookupTkType(t)
+  for k,v in pairs(keywords) do
+    if v.type == t then return k end
+  end
+  return nil
+end
+
 local identifierChars = "abcdefghijklmnopqrstuvwxyzåäöøABCDEFGHIJKLMNOPQRSTUVWXYZÅÄÖØ"
 
 local tknsStrs = {
@@ -61,13 +68,13 @@ local tknsStrs = {
 {"><!=~","[><!=~][>=]", function(t) 
   local k = keywords[t]
   if not k then error("Bad token:"..t) end
-  return {type=k.type, value=k.value}
+  return {type=k.type, value=k.value, tk=t}
 end
 },
 {"+-*/(){}&|!:;,.<>=[]",".",function(t) 
   local k = keywords[t]
   if not k then error("Bad token:"..t) end
-  return {type=k.type, value=k.value}
+  return {type=k.type, value=k.value, tk=t}
 end
 },
 {" \t\n","%s+",function(t) 
@@ -82,7 +89,7 @@ end
 {identifierChars,"["..identifierChars.."]["..identifierChars.."_%d]*",function(id) 
   local k = keywords[id]
   if k then
-    return {type=k.type, value=k.value}
+    return {type=k.type, value=k.value, tk=id}
   end
   return {type='identifier', value=id} end
 },
@@ -121,9 +128,11 @@ local function tokenizer(str)
       local s, e = str:find(cand.pattern, pos)
       if s == pos then
         local tokenStr = str:sub(s, e)
+        local start,len = pos, e - pos + 1
         pos = e + 1
         local tokenVal = cand.handler(tokenStr)
         if tokenVal ~= nil then
+          tokenVal.pos, tokenVal.len = start, len
           return setmetatable(tokenVal,tokenMT)
         else
           return tkns() -- Skip token (e.g. whitespace)
@@ -167,8 +176,9 @@ local function tokenStream(str)
       next()
       return t
     else
-      local got = t and ("'"..t.type.."'") or "end of input"
-      error("Expected '"..expectedType.."', got "..got, 2)
+      local exp = lookupTkType(expectedType) or expectedType
+      local got = t and ("'"..t.tk.."'") or "end of input"
+      error("Expected '"..exp.."', got "..got, 2)
     end
   end
   return {

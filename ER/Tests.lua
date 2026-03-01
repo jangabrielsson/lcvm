@@ -119,8 +119,9 @@ function QuickApp:test1()
     -- {"local a=0; for k,v in pairs({2,3,4,5}) do a=a+v end; return a",{14}},
     -- {"local function f(a) return a+1 end; return f(2)", {3}},
     -- {"return (function(a) return a+2 end)(2)", {4}},
-    {"a = 9; return a", {9}},
-    {"return a", {9}},
+    -- {"a = 9; return a", {9}},
+    -- {"return a", {9}},
+    {"return (67}",{"a"}}
     -- Add more complex expressions as needed
   }
   for _,test in ipairs(tests) do

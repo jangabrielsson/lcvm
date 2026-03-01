@@ -162,7 +162,7 @@ p_prefixexp = function(tkns)
   elseif t and t.type == 'lpar' then
     tkns.next()
     node = p_expr(tkns)
-    tkns.match('rpar')
+    tkns.expect('rpar')
     --node = {type='paren', expr=node}
   else
     return nil
