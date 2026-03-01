@@ -394,6 +394,13 @@ function p_stat(tkns)
     local block = p_block(tkns)
     tkns.match('end')
     return {type='do', body=block}
+  elseif t.type == 'loop' then
+    tkns.next()
+    local block = p_block(tkns)
+    if not tkns.match('end') then
+      error("Expected 'end' to close 'loop' statement")
+    end
+    return {type='loop', body=block}
   elseif t.type == 'while' then
     tkns.next()
     local test = p_expr(tkns)
@@ -408,6 +415,26 @@ function p_stat(tkns)
     local test = p_expr(tkns)
     return {type='repeat', test=test, body=body}
   elseif t.type == 'if' then
+    tkns.next()
+    local test = p_expr(tkns)
+    tkns.match('then')
+    local body = p_block(tkns)
+    local elseifs = {}
+    local elsebody = nil
+    while tkns.peek() and tkns.peek().type == 'elseif' do
+      tkns.next()
+      local etest = p_expr(tkns)
+      tkns.match('then')
+      local ebody = p_block(tkns)
+      table.insert(elseifs, {test=etest, body=ebody})
+    end
+    if tkns.match('else') then
+      elsebody = p_block(tkns)
+    end
+    if not tkns.match('end') then
+      error("Expected 'end' to close 'if' statement")
+    end
+    return {type='if', test=test, body=body, elseifs=elseifs, else_body=elsebody}
   elseif t.type == 'for' then
   elseif t.type == 'function' then
     tkns.next()
@@ -465,11 +492,13 @@ end
 
 -- block ::= {stat [';']} [laststat [';'] ]
 
+local blockStop = {['end']=true, ['else']=true, ['elseif']=true, ['until']=true, ['return']=true}
+
 function p_block(tkns)
   local stats = {}
   oldLocals = locals
   locals = {}
-  while tkns.peek().type ~= 'return' do
+  while tkns.peek() and not blockStop[tkns.peek().type] do
     local pt = tkns.peek()
     local stat = p_stat(tkns)
     if stat then table.insert(stats, stat)
@@ -477,8 +506,13 @@ function p_block(tkns)
     tkns.match('semicolon')
   end
   if tkns.match('return') then
-    local exprlist = p_exprlist(tkns)
+    local t = tkns.peek()
+    local exprlist = {}
+    if t and not blockStop[t.type] and t.type ~= 'semicolon' then
+      exprlist = p_exprlist(tkns)
+    end
     table.insert(stats, {type='return', exprs=exprlist})
+    tkns.match('semicolon')
   end
   local nlocals = locals
   locals = oldLocals

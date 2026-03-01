@@ -98,8 +98,10 @@ local function IF(condExpr,thenExpr,elseExpr)
       local actualEnv = envFromCond or env
       if condVal then
         return thenExpr(cont,actualEnv)
-      else
+      elseif elseExpr then
         return elseExpr(cont,actualEnv)
+      else
+        cont(false)
       end
     end,
     env)
@@ -187,6 +189,7 @@ end
 
 local function PROGN(...)
   local exprs = {...}
+  if #exprs == 1 then return exprs[1] end
   return function(cont,env)
     return evalExprs(exprs,cont)
   end

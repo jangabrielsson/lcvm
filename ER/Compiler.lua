@@ -29,11 +29,27 @@ function comp.string(node)
   return EXPR.CONST(node.value)
 end
 
+function comp.literal(node)
+  return EXPR.CONST(node.value)
+end
+
+comp['true'] = function(node)
+  return EXPR.CONST(true)
+end
+
+comp['false'] = function(node)
+  return EXPR.CONST(false)
+end
+
+comp['nil'] = function(node)
+  return EXPR.CONST(false)  -- Lisp nil is false
+end
+
 local consts = { ['number']=true, ['string']=true, ['literal']=true, ['boolean']=true}
 local function keyValue(key)
   if type(key) ~= 'table' then return EXPR.CONST(key) end
-  if consts[key.type] then return compile(key) end
-  error("Unsupported key type: "..tostring(key.type))
+  return compile(key)
+  --error("Unsupported key type: "..tostring(key.type))
 end
 
 function comp.assign(node)
@@ -50,7 +66,8 @@ function comp.assign(node)
     elseif type(var)=='string' then
       vars[#vars+1] = var
     else      
-      error("Unsupported assignment target type: "..tostring(var.type))
+      vars[#vars+1] = compile(var)
+      --error("Unsupported assignment target type: "..tostring(var.type))
     end
   end
   for _,expr in ipairs(node.exprs) do
@@ -83,11 +100,33 @@ comp['return'] = function(node)
   return EXPR.RETURN(table.unpack(exprs))
 end
 
+comp['if'] = function(node) 
+  -- {type='if', test=test, body=body, elseifs=elseifs, else_body=elsebody}
+  local test = compile(node.test)
+  local thenExpr = EXPR.PROGN(compile(node.body))
+  local elseExpr
+  if not node.elseifs or #node.elseifs == 0 then
+    elseExpr = node.else_body and EXPR.PROGN(compile(node.else_body)) or EXPR.CONST(false)
+  else
+    local firstIf = node.elseifs[1]
+    local elseIfs = {select(2,table.unpack(node.elseifs))}
+    elseExpr = compile({type='if', test=firstIf.test, body=firstIf.body, elseifs=elseIfs, else_body=node.else_body})
+  end
+  return EXPR.IF(test,thenExpr,elseExpr)
+end
+
 local opmap = {
+  ['not'] = 'not',
   ['plus'] = '+',
   ['minus'] = '-',
   ['multiply'] = '*',
-  ['divide'] = '/',
+  ['divide'] = '/',  
+  ['equal'] = '==',  
+  ['not_equal'] = '~=',
+  ['greater_than'] = '>',
+  ['less_than'] = '<',
+  ['greater_equal'] = '>=',
+  ['less_equal'] = '<=',
 }
 
 function comp.binop(node)
@@ -135,8 +174,37 @@ function comp.table(node)
   return EXPR.MAKE_TABLE(unpack(entries))
 end
 
+comp['do'] = function(node)
+  return compile(node.body)
+end
+
+comp['loop'] = function(node)
+  local body = node.body
+  return EXPR.LOOP(compile(body))
+end
+
+comp['repeat'] = function(node)
+  local body = node.body
+  local check = {type='if',test=node.test, body={type='break'}}
+  table.insert(body.statements,check)
+  return EXPR.LOOP(compile(body))
+end
+
+comp['while'] = function(node)
+  local body = node.body
+  local test = {type='unop', op='not', operand=node.test}
+  local check = {type='if',test=test, body={type='break'}}
+  table.insert(body.statements,1,check)
+  return EXPR.LOOP(compile(body))
+end
+
+comp['break'] = function(node)
+  local a = node
+  return EXPR.BREAK()
+end
+
 function compile(ast)
-  if comp[ast.type] then 
+  if ast and comp[ast.type] then 
     return comp[ast.type](ast)
   else
     print(json.encodeFormated(cast))

@@ -12,7 +12,7 @@ local keywords = {
   [">="] = {type='op',value='greater_equal'},
   ["<="] = {type='op',value='less_equal'},
   ["=="] = {type='op',value='equal'},
-  ["!="] = {type='op',value='not_equal'},
+  ["~="] = {type='op',value='not_equal'},
   ["+"] = {type='op',value='plus'},
   ["-"] = {type='op',value='minus'},
   ["*"] = {type='op',value='multiply'},
@@ -36,21 +36,29 @@ local keywords = {
   ['elseif'] = {type='elseif',value='elseif'},
   ['while'] = {type='while',value='while'},
   ['do'] = {type='do',value='do'},
+  ['loop'] = {type='loop',value='loop'},
   ['repeat'] = {type='repeat',value='repeat'},
   ['until'] = {type='until',value='until'},
   ['return'] = {type='return',value='return'},
   ['break'] = {type='break',value='break'},
   ['nil'] = {type='nil',value=false},
+  ['true'] = {type='true',value=true},
+  ['false'] = {type='false',value=false},
+  ['for'] = {type='for',value='for'},
+  ['in'] = {type='in',value='in'},
+  ['not'] = {type='op',value='not'},
+  ['and'] = {type='op',value='and'},
+  ['or'] = {type='op',value='or'},
 }
 
-local identifierChars = "abcdefghijklmnopqrstuvxyzåäöøABCDEFGHIJKLMNOPQRSTUVXYZÅÄÖØ"
+local identifierChars = "abcdefghijklmnopqrstuvwxyzåäöøABCDEFGHIJKLMNOPQRSTUVWXYZÅÄÖØ"
 
 local tknsStrs = {
   {"0123456789","%d+%.?%d*",function(n) 
     return {type='number',value=tonumber(n)} 
   end
 },
-{"><!=","[><!=][>=]", function(t) 
+{"><!=~","[><!=~][>=]", function(t) 
   local k = keywords[t]
   if not k then error("Bad token:"..t) end
   return {type=k.type, value=k.value}
