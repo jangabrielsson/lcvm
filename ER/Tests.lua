@@ -111,7 +111,7 @@ function QuickApp:test1()
     --{"local a = 0; repeat a = a + 1; print(a) until a > 100; return 7",{7}}
     --{"local a = 0; while a < 100 do a = a + 1; print(a) end; return 7",{7}}
     -- {"for x=10,1,-1 do print(x) end; return 7",{7}}
-    {"for k,v in pairs({a=1,b=2}) do print(k,v) end; return 7",{7}}
+    {"for k,v in pairs({2,3,4,5}) do print(k,v) end; return 7",{7}}
     -- Add more complex expressions as needed
   }
   for _,test in ipairs(tests) do

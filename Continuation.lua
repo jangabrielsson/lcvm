@@ -967,7 +967,7 @@ end
 local function NULLP(expr)
   return function(cont, env)
     return expr, function(val)
-      local isNull = (val == false) or (type(val) == 'table' and #val == 0)
+      local isNull = (val == false) or (val == nil) or (type(val) == 'table' and #val == 0)
       return cont(isNull)
     end
   end
