@@ -164,7 +164,7 @@ p_prefixexp = function(tkns)
   local node
   if t and t.type == 'identifier' then
     tkns.next()
-    node = {type='variable', name=t.value}
+    node = {type='variable', name=t.value, pos=t.pos, len=t.len}
   elseif t and t.type == 'lpar' then
     tkns.next()
     node = p_expr(tkns)
@@ -181,20 +181,20 @@ p_prefixexp = function(tkns)
       tkns.next()
       local idx = p_expr(tkns)
       tkns.expect('rsqb')
-      node = {type='tableaccess', table=node, key=idx}
+      node = {type='tableaccess', table=node, key=idx, pos=node.pos, len=node.len}
     elseif pt.type == 'dot' then     -- '.' Name
       tkns.next()
       local name = tkns.expect('identifier')
-      node = {type='tableaccess', table=node, key=name.value}
+      node = {type='tableaccess', table=node, key=name.value, pos=node.pos, len=node.len}
     elseif pt.type == 'colon' then   -- ':' Name args
       tkns.next()
       local method = tkns.expect('identifier').value
       local args = p_args(tkns)
-      node = {type='methodcall', object=node, method=method, args=args}
+      node = {type='methodcall', object=node, method=method, args=args, pos=pt.pos, len=pt.len}
     else
       local args = p_args(tkns)
       if args then
-        node = {type='call', func=node, args=args}
+        node = {type='call', func=node, args=args, pos=pt.pos, len=pt.len}
       else
         break
       end
@@ -211,7 +211,7 @@ local function p_primaryexp(tkns)
   if t.type == 'number' or t.type == 'string' or t.type == 'nil' or
      t.type == 'true' or t.type == 'false' then
     tkns.next()
-    return {type=t.type, value=t.value}
+    return {type=t.type, value=t.value, pos=t.pos, len=t.len}
   elseif t.type == 'vararg' then   -- '...'
     tkns.next()
     return {type='vararg'}

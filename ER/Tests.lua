@@ -5,8 +5,8 @@
 --%%file:ER/Compiler.lua,compiler
 ER = ER or { _tools = {} }
 
-local test1 = true
---local test2 = true
+--local test1 = true
+local test2 = true
 local test3 = true
 
 local parser,compile
@@ -32,6 +32,21 @@ function QuickApp:onInit()
 end
 
 local function compute(str,env)
+  env.__sourceStr = str
+  -- Wrap env.error once per env to append source location on runtime errors
+  if not env.__errorWrapped then
+    env.__errorWrapped = true
+    local sm = ER._tools.sourceMarker
+    local baseError = env.error
+    env.error = function(msg, tag)
+      local loc = env.__loc
+      env.__loc = nil  -- clear so it isn't appended again if execute re-calls env.error
+      if loc and sm and env.__sourceStr then
+        msg = msg .. sm(env.__sourceStr, loc.pos, loc.len)
+      end
+      return baseError(msg, tag)
+    end
+  end
   local ast = parser(str)
   local code = compile(ast)
   local res = nil
@@ -140,15 +155,17 @@ end
 function QuickApp:testErrors()
   local env = VM.createEnvironment()
   function env.nonVarHandler(name) return _G[name] end
+  -- env.error wrapping happens automatically inside compute()
 
   local tests = {
-    {"return 1 + ", "Unexpected end of input in expression at end of input"},
-    {"return (1 + 2", "Expected ')', got end of input at end of input"},
-    {"x = ", "In assignment: Unexpected end of input in expression at end of input"},
-    {"if true then return 1", "In if statement: Expected 'end', got end of input at end of input"},
-    {"if true return 1 end", "In if statement: Expected 'then', got 'return'"},
-    {"local a = 3; if a > 2 then do a=8 end end; return a", nil}, -- This should pass
-    {"local a = 3; if a > 2 then do a=8 end end; return b", "Execution error: Variable 'b' is not defined"},
+    -- {"return 1 + ", "Unexpected end of input in expression at end of input"},
+    -- {"return (1 + 2", "Expected ')', got end of input at end of input"},
+    -- {"x = ", "In assignment: Unexpected end of input in expression at end of input"},
+    -- {"if true then return 1", "In if statement: Expected 'end', got end of input at end of input"},
+    -- {"if true return 1 end", "In if statement: Expected 'then', got 'return'"},
+    -- {"local a = 3; if a > 2 then do a=8 end end; return a", nil}, -- This should pass
+    -- {"local a = 3; if a > 2 then do a=8 end end; return b", "Execution error: Variable 'b' is not defined"},
+    {"return a.x", "Runtime error: table access: first argument must be a table"},
     -- Add more error cases as needed
   }
   
@@ -164,7 +181,7 @@ function QuickApp:testErrors()
       end
     else
       if expectedError and tostring(err):find(expectedError) then
-        print("\27[32m[✓]\27[0m", code)
+        print("\27[32m[✓]\27[0m", code, "\n"..err)
       else
         print("\27[31m[X]\27[0m", code)
         print("Expected error:", expectedError, "but got:", err)

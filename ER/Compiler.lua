@@ -6,6 +6,20 @@ local compile
 
 local comp = {}
 
+-- LOCATE: pure-CPS wrapper that sets env.__loc before evaluating inner.
+-- Completely decoupled from the VM -- just another continuation function.
+local function LOCATE(pos, len, inner)
+  if not pos then return inner end
+  return function(cont, env, ...)
+    local prev = env.__loc
+    env.__loc = {pos=pos, len=len}
+    return inner(function(...)
+      env.__loc = prev
+      return cont(...)
+    end, env, ...)
+  end
+end
+
 function comp.statements(node)
   local statements = {}
   for _,stat in ipairs(node.statements) do
@@ -89,7 +103,7 @@ end
 comp.tableaccess = function(node)
   local tab = compile(node.table)
   local key = keyValue(node.key)
-  return EXPR.AREF(tab, key)
+  return LOCATE(node.pos, node.len, EXPR.AREF(tab, key))
 end
 
 comp['return'] = function(node)
@@ -159,7 +173,7 @@ comp['or'] = function(node)
 end
 
 function comp.variable(node)
-  return EXPR.VAR(node.name)
+  return LOCATE(node.pos, node.len, EXPR.VAR(node.name))
 end
 
 function comp.call(node)
@@ -168,7 +182,18 @@ function comp.call(node)
   for _,arg in ipairs(node.args) do
     args[#args+1] = compile(arg)
   end
-  return EXPR.FUNCALL(func, unpack(args))
+  return LOCATE(node.pos, node.len, EXPR.FUNCALL(func, unpack(args)))
+end
+
+comp.methodcall = function(node)
+  -- obj:method(args)  ->  FUNCALL(AREF(obj, 'method'), obj, args)
+  local objExpr = compile(node.object)
+  local methodExpr = EXPR.AREF(objExpr, EXPR.CONST(node.method))
+  local allArgs = {objExpr}
+  for _,arg in ipairs(node.args) do
+    allArgs[#allArgs+1] = compile(arg)
+  end
+  return LOCATE(node.pos, node.len, EXPR.FUNCALL(methodExpr, unpack(allArgs)))
 end
 
 function comp.table(node)

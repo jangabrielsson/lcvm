@@ -977,7 +977,7 @@ local function AREF(tableExpr, keyExpr)
   return function(cont, env)
     return tableExpr, function(tbl)
       if type(tbl) ~= 'table' then
-        if env.error then env.error("AREF: first argument must be a table") end
+        if env.error then env.error("table access: first argument must be a table") end
         return cont(false)
       end
       return keyExpr, function(key)
@@ -992,7 +992,7 @@ local function ASET(tableExpr, keyExpr, valueExpr)
   return function(cont, env)
     return tableExpr, function(tbl)
       if type(tbl) ~= 'table' then
-        if env.error then env.error("ASET: first argument must be a table") end
+        if env.error then env.error("table access: first argument must be a table") end
         return cont(false)
       end
       return keyExpr, function(key)
@@ -1149,7 +1149,7 @@ local function createEnvironment(vars,nonVarHandler,sharedTopvars)
       end
     end
     -- No matching catch - fatal error (original behavior)
-    print("ERROR: " .. msg)
+    --print("ERROR: " .. msg)
     error(msg, 0)
   end
   

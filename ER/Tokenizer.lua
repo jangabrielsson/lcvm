@@ -243,3 +243,4 @@ end
 
 ER._tools.tokenizer = tokenizer
 ER._tools.tokenStream = tokenStream
+ER._tools.sourceMarker = sourceMarker
