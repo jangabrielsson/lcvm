@@ -3,6 +3,8 @@
 --%%file:ER/Tokenizer.lua,tokenizer
 --%%file:ER/Parser.lua,parser
 --%%file:ER/Compiler.lua,compiler
+--%%file:ER/Utils.lua,utils
+
 ER = ER or { _tools = {} }
 
 --local test1 = true

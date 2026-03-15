@@ -240,12 +240,22 @@ end
 
 -- unaryexp ::= unop unaryexp | powexp
 -- unop ::= '-' | 'not' | '#'
+--          | 't/' | 'n/' | '+/' | '$' | '$$' | '$$$' | '@' | '@@'  (ER extensions)
+local erUnaryTypes = {
+  today=true, nexttime=true, plustime=true,
+  gv=true, qv=true, pv=true,
+  daily=true, interv=true,
+}
 p_unaryexp = function(tkns)
   local t = tkns.peek()
   if t and t.type == 'op' and (t.value == 'minus' or t.value == 'not' or t.value == 'len') then
     tkns.next()
     local operand = p_unaryexp(tkns)
-    return {type='unop', op=t.value, operand=operand}
+    return {type='unop', op=t.value, operand=operand, pos=t.pos, len=t.len}
+  elseif t and erUnaryTypes[t.type] then
+    tkns.next()
+    local operand = p_unaryexp(tkns)
+    return {type='unop', op=t.type, operand=operand, pos=t.pos, len=t.len}
   end
   return p_powexp(tkns)
 end
@@ -290,11 +300,16 @@ end
 
 -- relexp ::= concatexp {relop concatexp}
 -- relop ::= '<' | '<=' | '>' | '>=' | '==' | '~='
+--           | '..' | '++' | '===' | '??'  (ER extensions, same priority)
 local relops = {less_than=true, less_equal=true, greater_than=true, greater_equal=true, equal=true, not_equal=true}
+local erBinTypes = {betw=true, conc=true, match=true, nilco=true}
 local function p_relexp(tkns)
   local left = p_concatexp(tkns)
-  while tkns.peek() and tkns.peek().type == 'op' and relops[tkns.peek().value] do
-    local op = tkns.next().value
+  while tkns.peek() and
+        ((tkns.peek().type == 'op' and relops[tkns.peek().value]) or
+          erBinTypes[tkns.peek().type]) do
+    local t = tkns.next()
+    local op = erBinTypes[t.type] and t.type or t.value
     local right = p_concatexp(tkns)
     left = {type='binop', op=op, left=left, right=right}
   end

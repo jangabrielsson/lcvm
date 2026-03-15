@@ -319,7 +319,7 @@ local function BINOP(op,leftExpr,rightExpr)
   return function(cont,env)
     return leftExpr,function(leftVal)
       return rightExpr,function(rightVal)
-        local op = binops[op]
+        local op = binops[op] or (type(op) == 'function' and op)
         if op then
           local result = op(leftVal, rightVal)
           return cont(result)
@@ -340,7 +340,7 @@ local unops = {
 local function UNOP(op,expr)
   return function(cont,env)
     return expr,function(val)
-      local op = unops[op]
+      local op = unops[op] or (type(op) == 'function' and op)
       if op then
         local result = op(val)
         return cont(result)

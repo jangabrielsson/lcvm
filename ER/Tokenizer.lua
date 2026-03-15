@@ -49,6 +49,19 @@ local keywords = {
   ['not'] = {type='op',value='not'},
   ['and'] = {type='op',value='and'},
   ['or'] = {type='op',value='or'},
+
+  ['t/'] = {type='today',value='today'},  -- unary, today time constant, t/10:00
+  ['n/'] = {type='nexttime',value='nexttime'},  -- unary, next today time constant, n/10:00
+  ['+/'] = {type='plustime',value='plustime'},  -- unary, from today time constant, +/10:00
+  ['$'] = {type='gv',value='gv'}, -- unary, global variable, $var
+  ['$$'] = {type='qv',value='qv'},  -- unary, quickApp variable, $var
+  ['$$$'] = {type='pv',value='pv'}, -- unary, Persistent variable, $var
+  ['..'] = {type='betw',value='betw'}, -- binary, between operator, 10:00..11:00
+  ['@'] = {type='daily',value='daily'}, -- unary, day rule, @10:00
+  ['@@'] = {type='interv',value='interv'}, -- unary, interval rule, @@00:05
+  ['++'] = {type='conc',value='conc'}, -- binary, string concatenation
+  ['==='] = {type='match',value='match'}, -- binary, string match
+  ['??'] = {type='nilco',value='nilco'}, -- binary, nil coalescing
 }
 
 local function lookupTkType(t)

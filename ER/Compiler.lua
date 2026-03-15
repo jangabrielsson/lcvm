@@ -144,18 +144,34 @@ local opmap = {
   ['greater_equal'] = '>=',
   ['less_equal'] = '<=',
 }
+local ERopMap = {
+  ['betw'] = function(a,b) return fibaro.utils.between(a,b) end,
+  ['conc'] = function(a,b) return tostring(a)..tostring(b) end,
+  ['match'] = function(a,b) return tostring(a):match(tostring(b)) ~= nil end,
+  ['nilco'] = function(a,b) 
+    if a ~= nil then return a else return b end 
+  end,
+  ['today'] = 'today',
+  ['nexttime'] = 'nexttime',
+  ['plustime'] = 'plustime',
+  ['gv'] = function(name) return fibaro.getGlobalVariable(name) end,
+  ['qv'] = function(name) return quickApp:getVariable(name) end,
+  ['pv'] = 'pv',
+}
 
 function comp.binop(node)
   local left = compile(node.left)
   local right = compile(node.right)
-  local op = opmap[node.op]
+  local op = opmap[node.op] or ERopMap[node.op]
+  if op then return EXPR.BINOP(op, left, right) end
+  op = ERopMap[node.op]
+  --if op then return EXPR.BINOP(op, left, right) end
   if not op then error("Unknown binary operator: "..tostring(node.op)) end
-  return EXPR.BINOP(op, left, right)
 end
 
 function comp.unop(node)
   local operand = compile(node.operand)
-  local op = opmap[node.op]
+  local op = opmap[node.op] or ERopMap[node.op]
   if not op then error("Unknown unary operator: "..tostring(node.op)) end
   return EXPR.UNOP(op, operand)
 end
