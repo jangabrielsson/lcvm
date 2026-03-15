@@ -38,8 +38,12 @@ local function execute(expr, cont, env, options, ...)
   local debug = options.debug or false
   local onStep = options.onStep
   
-  -- Set top-level function continuation so RETURN works at the top level
-  env.__funcCont = cont
+  -- Set top-level function continuation so RETURN works at the top level.
+  -- Skip this when resuming inside a Lua coroutine to preserve the funcCont
+  -- that was set up by FUNC on the original call into the coroutine body.
+  if not options.noSetFuncCont then
+    env.__funcCont = cont
+  end
 
   local i = 0
   local args = {...}
@@ -771,6 +775,15 @@ end
 
 local function YIELD0()
   return function(cont, env, ...)
+    -- Lua-level coroutine: save continuation and stop the trampoline
+    local luaCo = env.__luaCoroutine
+    if luaCo then
+      luaCo._resumeCont = cont
+      luaCo._yieldValues = {}
+      luaCo.status = 'suspended'
+      return nil, nil  -- stops the trampoline
+    end
+    -- Lisp-level coroutine
     local co = env:getCurrentCoroutine()
     if not co then
       env.error("YIELD outside of coroutine")
@@ -784,6 +797,17 @@ end
 
 local function YIELD1(expr)
   return function(cont, env, ...)
+    -- Lua-level coroutine: save continuation and stop the trampoline
+    local luaCo = env.__luaCoroutine
+    if luaCo then
+      return expr, function(val)
+        luaCo._resumeCont = cont
+        luaCo._yieldValues = {val}
+        luaCo.status = 'suspended'
+        return nil, nil  -- stops the trampoline
+      end
+    end
+    -- Lisp-level coroutine
     local co = env:getCurrentCoroutine()
     if not co then
       env.error("YIELD outside of coroutine")
@@ -800,6 +824,17 @@ end
 local function YIELD(...)
   local exprs = {...}
   return function(cont, env, ...)
+    -- Lua-level coroutine: save continuation and stop the trampoline
+    local luaCo = env.__luaCoroutine
+    if luaCo then
+      return evalArgs(exprs, function(...)
+        luaCo._resumeCont = cont
+        luaCo._yieldValues = {...}
+        luaCo.status = 'suspended'
+        return nil, nil  -- stops the trampoline
+      end)
+    end
+    -- Lisp-level coroutine
     local co = env:getCurrentCoroutine()
     if not co then
       env.error("YIELD outside of coroutine")
@@ -1255,8 +1290,168 @@ local function createEnvironment(vars,nonVarHandler,sharedTopvars)
   return self
 end
 
+-- VM.luaCoroutine(funcExpr [, env [, options]]) → coroutine handle
+--
+-- Wraps a compiled VM function expression as a resumable Lua coroutine.
+-- The coroutine owns its own environment (or shares one you supply).
+-- Because Lua's native coroutines are unavailable on HC3, yield/resume are
+-- implemented purely by stopping and restarting the trampoline.
+--
+-- API on the returned handle:
+--   ok, val...  = co.resume(args...)   -- first call passes args to the function
+--   ok, val...  = co.resume(vals...)   -- subsequent: vals become the yield return
+--   co.status                          -- 'suspended' | 'running' | 'dead'
+--
+-- Yield inside compiled code uses the normal (yield ...) form.
+-- When yield fires in a Lua coroutine context the trampoline is stopped and
+-- co.resume returns  true, <yielded values>.
+-- When the function returns normally co.resume returns  true, <return values>.
+-- On error it returns  false, <error message>.
+local function luaCoroutine(funcExpr, sharedEnv, options)
+  options = options or {}
+  local env = sharedEnv or createEnvironment()
+  local execMaxSteps = options.maxSteps or math.huge
+
+  local co = {
+    status       = 'suspended',
+    _resumeCont  = nil,   -- saved continuation at the last yield point
+    _yieldValues = nil,   -- values passed to (yield ...)
+    _returnValues= nil,   -- values returned by the function when it finishes
+  }
+
+  -- Mark the env so YIELD knows to stop the trampoline instead of bouncing
+  env.__luaCoroutine = co
+
+  function co.resume(...)
+    if co.status == 'dead' then
+      return false, "cannot resume dead coroutine"
+    end
+    if co.status == 'running' then
+      return false, "cannot resume running coroutine"
+    end
+
+    co.status = 'running'
+    local resumeArgs = {...}
+
+    -- Top-level continuation: captures the function's return values.
+    -- This closure is captured by the FUNC body-done path on the first resume,
+    -- so it correctly marks the coroutine dead whenever the function finishes.
+    local function finalCont(...)
+      co.status       = 'dead'
+      co._returnValues = {...}
+      return nil   -- stops the trampoline
+    end
+
+    local startExpr, execOpts
+
+    if co._resumeCont then
+      -- ---- Resuming from a yield ----------------------------------------
+      -- Build a bootstrap expression that feeds resumeArgs into the saved
+      -- continuation.  We must NOT let execute() overwrite env.__funcCont
+      -- because the FUNC setup already placed the right frame-cleanup
+      -- continuation there when the function was first called.
+      local savedCont  = co._resumeCont
+      co._resumeCont   = nil
+      startExpr = function(_, _, ...)
+        return savedCont(...)
+      end
+      execOpts = { maxSteps = execMaxSteps, noSetFuncCont = true }
+    else
+      -- ---- First resume: evaluate funcExpr → call the resulting function --
+      startExpr = function(cont, callEnv, ...)
+        local args = {...}
+        return funcExpr, function(funcObj)
+          if isContinuation(funcObj) and funcObj.__fun then
+            -- VM compiled function
+            return funcObj.__fun(cont, callEnv, table.unpack(args))
+          elseif type(funcObj) == 'function' then
+            -- Plain Lua function (no yield support, but handle gracefully)
+            local ok, err = pcall(function()
+              local results = table.pack(funcObj(table.unpack(args)))
+              cont(table.unpack(results, 1, results.n))
+            end)
+            if not ok then callEnv.error(tostring(err)) end
+            return nil, nil
+          else
+            callEnv.error("luaCoroutine: funcExpr must evaluate to a function, got "
+                          .. type(funcObj))
+            return nil, nil
+          end
+        end
+      end
+      execOpts = { maxSteps = execMaxSteps }
+    end
+
+    local ok, err = pcall(function()
+      execute(startExpr, finalCont, env, execOpts, table.unpack(resumeArgs))
+    end)
+
+    if not ok then
+      co.status = 'dead'
+      return false, tostring(err)
+    end
+
+    if co.status == 'suspended' then
+      -- yield was hit: return yielded values to the Lua caller
+      return true, table.unpack(co._yieldValues or {})
+    else
+      -- function returned normally
+      return true, table.unpack(co._returnValues or {})
+    end
+  end
+
+  return co
+end
+
+-- VM.yieldable(fn) → continuation object
+--
+-- Wraps a plain Lua function so that when called from inside a VM.luaCoroutine
+-- its return value is yielded back to the Lua caller (stopping the trampoline)
+-- rather than simply passed on as the next continuation value.
+--
+-- Outside a luaCoroutine (normal execute or Lisp coroutine) it behaves exactly
+-- like the original function — the return value is passed straight to the
+-- continuation as usual.
+--
+-- Usage:
+--   env.nonVarHandler = function(name)
+--     if name == 'wait' then
+--       return VM.yieldable(function(sec) return {wait=sec} end)
+--     end
+--     return _G[name]
+--   end
+local function yieldable(fn)
+  local funcObj = {}
+  local mt = {
+    __type = 'continuation',
+    __tostring = function() return "yieldable:" .. tostring(fn) end,
+    __call = function(_, cont, env, ...)
+      -- When the object itself is the expression (self-evaluating), return the object
+      return cont(funcObj)
+    end
+  }
+  funcObj.__fun = function(cont, env, ...)
+    local results = table.pack(fn(...))
+    local luaCo = env.__luaCoroutine
+    if luaCo then
+      -- Inside a luaCoroutine: yield the result back to Lua
+      luaCo._resumeCont  = cont
+      luaCo._yieldValues = {table.unpack(results, 1, results.n)}
+      luaCo.status       = 'suspended'
+      return nil, nil  -- stops the trampoline
+    else
+      -- Normal execution: just pass the result on
+      return cont(table.unpack(results, 1, results.n))
+    end
+  end
+  setmetatable(funcObj, mt)
+  return funcObj
+end
+
 VM = {}
 VM.expr = expr
 VM.execute = execute
 VM.createEnvironment = createEnvironment
+VM.luaCoroutine = luaCoroutine
+VM.yieldable = yieldable
 VM.evalExprsCount = function() return evalExprsCount end

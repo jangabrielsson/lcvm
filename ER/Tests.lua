@@ -8,7 +8,7 @@
 ER = ER or { _tools = {} }
 
 --local test1 = true
-local test2 = true
+-- local test2 = true
 local test3 = true
 
 local parser,compile
@@ -31,6 +31,7 @@ function QuickApp:onInit()
   compile = ER._tools.compile
   if test1 then self:test1() end
   if test2 then self:testErrors() end
+  if test3 then self:testCoro() end
 end
 
 local function compute(str,env)
@@ -65,17 +66,17 @@ local function compute(str,env)
   env,
   {debug=false}
 )
-  if not ok then
-    error("Execution error: "..tostring(err))
-  end
-  return res
+if not ok then
+  error("Execution error: "..tostring(err))
+end
+return res
 end
 
 function QuickApp:test1()
-    -- Create environment
+  -- Create environment
   local env = VM.createEnvironment()
   function env.nonVarHandler(name) return _G[name] end
-
+  
   function foo(x) return x+1 end
   local tests = {
     -- {"return 1 + 2", {3}},
@@ -158,7 +159,7 @@ function QuickApp:testErrors()
   local env = VM.createEnvironment()
   function env.nonVarHandler(name) return _G[name] end
   -- env.error wrapping happens automatically inside compute()
-
+  
   local tests = {
     -- {"return 1 + ", "Unexpected end of input in expression at end of input"},
     -- {"return (1 + 2", "Expected ')', got end of input at end of input"},
@@ -190,4 +191,40 @@ function QuickApp:testErrors()
       end
     end
   end
+end
+
+wait = VM.yieldable(function(seconds)
+  return {wait=seconds} -- We want to yield this...
+end)
+
+function QuickApp:testCoro()
+  local env = VM.createEnvironment()
+  function env.nonVarHandler(name) return _G[name] end
+  -- env.error wrapping happens automatically inside compute()
+  
+  local tests = {
+    {"return function(x) return x+1 end", {100}, {101}},
+    {"return function(x) wait(4); return x+1 end", {100}, {{wait=4}}},
+    -- Add more coroutine test cases as needed
+  }
+  
+  for _,test in ipairs(tests) do
+    local code, resumeArgs, expected = test[1], test[2], test[3]
+    local fun = compute(code, env)[1]
+    
+    local co = VM.luaCoroutine(fun, env:copy())
+    local results = {co.resume(table.unpack(resumeArgs))}
+    local ok = table.remove(results, 1)
+    if not ok then
+      print("\27[31m[X]\27[0m", code)
+      print("Expected:", json.encode(expected), "Got error:", results[1])
+    elseif not equal(results, expected) then
+      print("\27[31m[X]\27[0m", code)
+      print("Expected:", json.encode(expected), "Got:", json.encode(results))
+    else
+      print("\27[32m[✓]\27[0m", code)
+    end
+    
+  end
+  
 end

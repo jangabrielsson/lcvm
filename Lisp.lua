@@ -494,4 +494,5 @@ function compile(expr,ctx)
 end
 
 -- Export Lisp constructor as global
+print("LOADED")
 _G.Lisp = Lisp
