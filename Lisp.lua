@@ -185,6 +185,7 @@ local function Lisp(opts)
     return t
   end
   -- Error handler is set above in Lisp constructor
+  local macro = nil
   for k,v in pairs(macro or {}) do self.macro[k] = v end
   self.setfs.car = function(env, val, obj) obj[1] = val; return val end
   self.setfs.aref = function(env, val, obj, key) obj[key] = val; return val end
